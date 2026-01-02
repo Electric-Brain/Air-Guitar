@@ -4,12 +4,9 @@
 #include <WebSocketsServer.h>
 #include "FastIMU.h"
 
-// ==========================================
-// ⚠️ USER CONFIGURATION - EDIT THIS! ⚠️
-// ==========================================
-const char* ssid = "YOUR_WIFI_NAME";      // <--- PUT YOUR WIFI NAME HERE
-const char* password = "YOUR_WIFI_PASSWORD"; // <--- PUT YOUR PASSWORD HERE
-// ==========================================
+// WiFi Credentials
+const char* ssid = "22";
+const char* password = "********";
 
 // Pins
 #define I2C_SDA 21
@@ -43,11 +40,11 @@ int stringCount = 6;
 
 // Tunings for different guitars (Hz)
 const float tunings[5][6] = {
-  {82.41, 110.00, 146.83, 196.00, 246.94, 329.63},  // Acoustic
-  {82.41, 110.00, 146.83, 196.00, 246.94, 329.63},  // Electric
-  {82.41, 110.00, 146.83, 196.00, 246.94, 329.63},  // Classical
+  {82.41, 110.00, 146.83, 196.00, 246.94, 329.63},  // Acoustic (Standard E)
+  {82.41, 110.00, 146.83, 196.00, 246.94, 329.63},  // Electric (Standard E)
+  {82.41, 110.00, 146.83, 196.00, 246.94, 329.63},  // Classical (Standard E)
   {41.20, 55.00, 73.42, 98.00, 0, 0},               // Bass (4 strings)
-  {392.00, 261.63, 329.63, 440.00, 0, 0}            // Ukulele (4 strings)
+  {392.00, 261.63, 329.63, 440.00, 0, 0}            // Ukulele (G-C-E-A, 4 strings)
 };
 
 // Chord data
@@ -65,7 +62,7 @@ int chordFrets[7][6] = {
   {-1, 0, 0, 2, 3, 1}   // Dm
 };
 
-// Sensitivity & Thresholds
+// Sensitivity
 float sensitivity = 1.0;
 const float STRUM_THRESHOLD = 0.25;
 const float GYRO_THRESHOLD = 25.0;
@@ -79,585 +76,1378 @@ unsigned long lastBroadcast = 0;
 float lastAccelMag = 1.0;
 bool wasStrumming = false;
 
-// Function Prototypes
-void updateSensor();
-void updateStringSelection();
-void detectChord();
-void broadcastData();
-void webSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length);
-
-// ==========================================
-// 🎨 ENGINEERING UI - HTML/CSS/JS
-// ==========================================
-
-const char webpage_part1[] PROGMEM = R"rawliteral(
+const char webpage[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Electric Brain: ENG-Grade</title>
+<title>ESP32 Multi-Guitar - 3D Edition</title>
 <style>
-:root {
-    --bg: #050508;
-    --panel: rgba(15, 15, 25, 0.7);
-    --border: rgba(100, 200, 255, 0.15);
-    --primary: #00f0ff;
-    --secondary: #ff0055;
-    --text: #c0c0d0;
-    --grid: rgba(0, 240, 255, 0.03);
-}
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
-    font-family: 'JetBrains Mono', 'Courier New', monospace;
-    background-color: var(--bg);
-    background-image: 
-        linear-gradient(var(--grid) 1px, transparent 1px),
-        linear-gradient(90deg, var(--grid) 1px, transparent 1px);
-    background-size: 30px 30px;
-    color: var(--text);
-    overflow-x: hidden;
-    min-height: 100vh;
+  font-family: 'Segoe UI', sans-serif;
+  background: linear-gradient(135deg, #0a0a1a 0%, #1a1a3a 50%, #0a1628 100%);
+  color: #fff;
+  min-height: 100vh;
+  overflow-x: hidden;
 }
-.app-container {
-    max-width: 1400px;
-    margin: 0 auto;
-    padding: 10px;
-}
-/* --- Electric Brain Logo Animation --- */
-.header-unit {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    padding: 15px 25px;
-    border-radius: 4px;
-    backdrop-filter: blur(10px);
-    margin-bottom: 20px;
-    box-shadow: 0 0 20px rgba(0,0,0,0.5);
-    position: relative;
-    overflow: hidden;
-}
-.header-unit::before {
-    content: ''; position: absolute; top:0; left:0; width: 4px; height: 100%;
-    background: var(--primary); box-shadow: 0 0 10px var(--primary);
-}
-.brain-container {
-    position: relative;
-    width: 60px;
-    height: 60px;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-}
-.brain-emoji { font-size: 30px; z-index: 2; filter: hue-rotate(180deg) brightness(1.5); }
-.electron-ring {
-    position: absolute; width: 100%; height: 100%;
-    border-radius: 50%; border: 1px solid rgba(0, 240, 255, 0.3);
-    animation: spin 2s linear infinite;
-}
-.electron-ring::after {
-    content: ''; position: absolute; top: -3px; left: 50%;
-    width: 6px; height: 6px; background: var(--primary);
-    border-radius: 50%; box-shadow: 0 0 10px var(--primary);
-}
-.electron-ring:nth-child(2) { animation-duration: 3s; transform: rotate(45deg); width: 80%; height: 80%; border-color: rgba(255, 0, 85, 0.3); }
-.electron-ring:nth-child(2)::after { background: var(--secondary); box-shadow: 0 0 10px var(--secondary); }
-@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+.container { max-width: 1500px; margin: 0 auto; padding: 12px; }
 
-.title-block h1 { font-size: 1.5rem; color: #fff; letter-spacing: 2px; text-transform: uppercase; }
-.title-block .sub { font-size: 0.7rem; color: var(--primary); }
-
-.status-grid { display: flex; gap: 15px; font-size: 0.8rem; }
-.status-item { display: flex; align-items: center; gap: 6px; }
-.led { width: 8px; height: 8px; border-radius: 50%; background: #333; transition: all 0.3s; }
-.led.on { background: #0f0; box-shadow: 0 0 8px #0f0; }
-.led.warn { background: #ff0; box-shadow: 0 0 8px #ff0; }
-.led.off { background: #f00; box-shadow: 0 0 8px #f00; }
-
-/* --- Engineering Grid Layout --- */
-.main-dashboard {
-    display: grid;
-    grid-template-columns: 2fr 1fr;
-    gap: 15px;
+header {
+  text-align: center;
+  padding: 12px 0;
+  border-bottom: 1px solid rgba(255,215,0,0.2);
+  margin-bottom: 12px;
 }
-@media (max-width: 900px) { .main-dashboard { grid-template-columns: 1fr; } }
-
-.panel {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 15px;
-    position: relative;
+h1 {
+  font-size: 2em;
+  background: linear-gradient(90deg, #ffd700, #ff6b6b, #4ecdc4, #ffd700);
+  background-size: 300% auto;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer 4s linear infinite;
 }
-.panel-header {
-    font-size: 0.8rem;
-    color: var(--primary);
-    text-transform: uppercase;
-    border-bottom: 1px solid var(--border);
-    padding-bottom: 8px;
-    margin-bottom: 12px;
-    display: flex;
-    justify-content: space-between;
+@keyframes shimmer { to { background-position: 300% center; } }
+
+.status-bar {
+  display: flex;
+  justify-content: center;
+  gap: 15px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+  font-size: 0.85em;
+}
+.status-item { display: flex; align-items: center; gap: 5px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; }
+.dot.green { background: #0f0; box-shadow: 0 0 8px #0f0; }
+.dot.yellow { background: #ff0; box-shadow: 0 0 8px #ff0; }
+.dot.red { background: #f00; box-shadow: 0 0 8px #f00; }
+
+/* Guitar Type Selector */
+.guitar-selector {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 15px;
+  flex-wrap: wrap;
+}
+.guitar-btn {
+  background: rgba(255,255,255,0.1);
+  border: 2px solid rgba(255,255,255,0.2);
+  color: #fff;
+  padding: 10px 20px;
+  border-radius: 25px;
+  cursor: pointer;
+  transition: all 0.3s;
+  font-size: 0.95em;
+}
+.guitar-btn:hover {
+  background: rgba(255,255,255,0.2);
+  transform: translateY(-2px);
+}
+.guitar-btn.active {
+  background: linear-gradient(135deg, #ffd700, #ff8c00);
+  border-color: #ffd700;
+  color: #000;
+  font-weight: bold;
+  box-shadow: 0 4px 15px rgba(255,215,0,0.4);
 }
 
-/* --- 3D Canvas --- */
+.main-grid {
+  display: grid;
+  grid-template-columns: 1.3fr 0.7fr;
+  gap: 15px;
+}
+.card {
+  background: rgba(255,255,255,0.05);
+  backdrop-filter: blur(10px);
+  border-radius: 15px;
+  padding: 15px;
+  border: 1px solid rgba(255,255,255,0.1);
+}
+.card-title {
+  font-size: 1em;
+  color: #ffd700;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Guitar Canvas */
 #guitarCanvas {
-    width: 100%;
-    height: 400px;
-    background: radial-gradient(circle at center, #1a1a2e 0%, #050508 100%);
-    border-radius: 4px;
-    border: 1px solid var(--border);
+  width: 100%;
+  height: 500px;
+  display: block;
+  border-radius: 10px;
+  background: radial-gradient(ellipse at center, rgba(30,30,50,0.8) 0%, rgba(10,10,20,0.9) 100%);
 }
 
-/* --- Controls & Metrics --- */
-.metrics-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-    margin-bottom: 15px;
+/* String indicators */
+.strings-panel {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  margin: 12px 0;
 }
-.metric-box {
-    background: rgba(0,0,0,0.3);
-    padding: 10px;
-    border-left: 2px solid var(--secondary);
+.string-ind {
+  width: 45px;
+  height: 90px;
+  border-radius: 8px;
+  background: rgba(0,0,0,0.4);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.1s;
+  border: 2px solid transparent;
+  position: relative;
+  overflow: hidden;
 }
-.metric-val { font-size: 1.4rem; color: #fff; font-weight: bold; }
-.metric-label { font-size: 0.7rem; opacity: 0.7; }
+.string-ind::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 3px;
+  height: 100%;
+  background: linear-gradient(to bottom, rgba(255,255,255,0.8), rgba(255,255,255,0.4));
+  transform: translateX(-50%);
+  transition: all 0.1s;
+}
+.string-ind.active {
+  border-color: var(--str-color, #ffd700);
+  background: rgba(255,215,0,0.15);
+  box-shadow: 0 0 15px var(--str-color, rgba(255,215,0,0.4));
+}
+.string-ind.active::before {
+  animation: stringVibrate 0.05s infinite alternate;
+  box-shadow: 0 0 10px var(--str-color, #ffd700);
+}
+@keyframes stringVibrate {
+  from { transform: translateX(-50%) translateX(-2px); }
+  to { transform: translateX(-50%) translateX(2px); }
+}
+.string-ind .note { font-size: 1.1em; font-weight: bold; z-index: 1; }
+.string-ind .hz { font-size: 0.65em; opacity: 0.5; z-index: 1; }
 
-.string-visualizer {
-    display: flex;
-    justify-content: space-between;
-    height: 100px;
-    margin: 15px 0;
-    gap: 4px;
+/* Chord display */
+.chord-display {
+  text-align: center;
+  padding: 15px 0;
 }
-.eng-string {
-    flex: 1;
-    background: rgba(255,255,255,0.05);
-    position: relative;
-    border-radius: 2px;
-    transition: 0.1s;
+.chord-name {
+  font-size: 2.8em;
+  font-weight: 800;
+  background: linear-gradient(135deg, #ffd700, #ffed4e);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  transition: all 0.15s;
 }
-.eng-string.active { background: rgba(0, 240, 255, 0.2); box-shadow: 0 0 15px rgba(0, 240, 255, 0.1); }
-.eng-string::after {
-    content: attr(data-note);
-    position: absolute; bottom: 5px; left: 50%; transform: translateX(-50%);
-    font-size: 10px; color: #fff;
+.chord-name.strumming {
+  transform: scale(1.1);
+  filter: brightness(1.3);
 }
-.eng-string .vibe-line {
-    position: absolute; left: 50%; top: 0; bottom: 0; width: 2px;
-    background: var(--text); transform: translateX(-50%);
+.guitar-type-label {
+  font-size: 1em;
+  opacity: 0.7;
+  margin-top: 5px;
 }
 
-.control-btn {
-    width: 100%;
-    padding: 12px;
-    background: linear-gradient(90deg, rgba(0,240,255,0.1), transparent);
-    border: 1px solid var(--primary);
-    color: var(--primary);
-    font-family: inherit;
-    text-transform: uppercase;
-    cursor: pointer;
-    transition: 0.2s;
-    margin-top: 5px;
+/* Audio Button */
+.audio-section {
+  background: linear-gradient(135deg, rgba(255,100,100,0.1), rgba(255,150,100,0.1));
+  border: 1px solid rgba(255,100,100,0.3);
+  border-radius: 12px;
+  padding: 15px;
+  text-align: center;
+  margin: 12px 0;
 }
-.control-btn:hover { background: var(--primary); color: #000; box-shadow: 0 0 15px var(--primary); }
+.audio-btn {
+  background: linear-gradient(135deg, #ff6b6b, #ee5a5a);
+  border: none;
+  color: white;
+  padding: 12px 35px;
+  border-radius: 25px;
+  font-size: 1.1em;
+  cursor: pointer;
+  transition: all 0.3s;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.audio-btn:hover { transform: scale(1.05); box-shadow: 0 5px 20px rgba(255,100,100,0.4); }
+.audio-btn.active { background: linear-gradient(135deg, #4ecdc4, #44a08d); }
 
-.graph-container {
-    height: 80px;
-    background: rgba(0,0,0,0.2);
-    border-bottom: 1px solid var(--border);
-    margin-bottom: 5px;
-    position: relative;
+/* Stats */
+.stats-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-top: 12px;
 }
-.graph-canvas { width: 100%; height: 100%; display: block; }
+.stat-box {
+  background: rgba(0,0,0,0.3);
+  padding: 10px 5px;
+  border-radius: 8px;
+  text-align: center;
+}
+.stat-val { font-size: 1.3em; font-weight: 700; color: #4ecdc4; font-family: monospace; }
+.stat-lbl { font-size: 0.7em; opacity: 0.5; margin-top: 2px; }
+
+/* Motion bars */
+.motion-section {
+  margin-top: 12px;
+}
+.motion-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0;
+}
+.motion-label { width: 50px; font-size: 0.85em; }
+.motion-bar {
+  flex: 1;
+  height: 12px;
+  background: rgba(0,0,0,0.4);
+  border-radius: 6px;
+  overflow: hidden;
+  position: relative;
+}
+.motion-bar::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: 2px;
+  height: 100%;
+  background: rgba(255,255,255,0.3);
+}
+.motion-fill {
+  height: 100%;
+  border-radius: 6px;
+  transition: all 0.1s;
+  position: absolute;
+}
+.motion-val { width: 60px; text-align: right; font-family: monospace; font-size: 0.85em; }
+
+/* Sensitivity */
+.sensitivity-section {
+  margin-top: 12px;
+  padding: 12px;
+  background: rgba(0,0,0,0.2);
+  border-radius: 10px;
+}
+.sensitivity-section label { font-size: 0.9em; display: block; margin-bottom: 8px; }
+input[type="range"] {
+  width: 100%;
+  height: 6px;
+  border-radius: 3px;
+  background: #333;
+  -webkit-appearance: none;
+  outline: none;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #ffd700;
+  cursor: pointer;
+}
+
+/* Info bar */
+.info-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: rgba(0,0,0,0.85);
+  padding: 6px 15px;
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.8em;
+  font-family: monospace;
+}
+
+@media (max-width: 1000px) {
+  .main-grid { grid-template-columns: 1fr; }
+  #guitarCanvas { height: 400px; }
+}
 </style>
 </head>
 <body>
-<div class="app-container">
-    
-    <div class="header-unit">
-        <div style="display:flex; align-items:center; gap:15px;">
-            <div class="brain-container">
-                <div class="electron-ring"></div>
-                <div class="electron-ring"></div>
-                <div class="brain-emoji">🧠</div>
-            </div>
-            <div class="title-block">
-                <h1>Electric Brain</h1>
-                <div class="sub">ENGINEERING GRADE PHYSICS ENGINE v5.0</div>
-            </div>
-        </div>
-        <div class="status-grid">
-            <div class="status-item"><div id="ws-led" class="led warn"></div><span id="ws-text">NET_INIT</span></div>
-            <div class="status-item"><div id="audio-led" class="led off"></div><span>AUDIO_DRV</span></div>
-            <div class="status-item">FPS: <span id="fps-counter">0</span></div>
-        </div>
-    </div>
-
-    <div class="main-dashboard">
-        <div class="panel">
-            <div class="panel-header">
-                <span>Real-Time Physics Rendering</span>
-                <span>Active String: <span id="active-str-idx">NONE</span></span>
-            </div>
-            <canvas id="guitarCanvas"></canvas>
-            <div style="margin-top:10px; font-size:0.8rem; color:var(--text); display:flex; gap:20px;">
-                <span>ROLL: <span id="roll-val" style="color:var(--primary)">0.00°</span></span>
-                <span>PITCH: <span id="pitch-val" style="color:var(--secondary)">0.00°</span></span>
-                <span>ACCEL: <span id="acc-val">1.00g</span></span>
-            </div>
-        </div>
-
-        <div class="panel">
-            <div class="panel-header"><span>Telemetry & Control</span></div>
-            
-            <div class="metrics-grid">
-                <div class="metric-box">
-                    <div class="metric-val" id="chord-disp">OPEN</div>
-                    <div class="metric-label">CURRENT CHORD</div>
-                </div>
-                <div class="metric-box">
-                    <div class="metric-val" id="strum-count">0</div>
-                    <div class="metric-label">TOTAL STRUMS</div>
-                </div>
-            </div>
-
-            <div class="string-visualizer" id="string-viz">
-                </div>
-
-            <div style="margin: 20px 0;">
-                <div class="panel-header"><span>Signal Analysis (Gyro Z)</span></div>
-                <div class="graph-container">
-                    <canvas id="scopeCanvas"></canvas>
-                </div>
-            </div>
-
-            <button class="control-btn" id="audio-btn" onclick="toggleAudio()">INITIALIZE AUDIO ENGINE</button>
-            <div style="margin-top:10px;">
-                 <label style="font-size:0.7rem;">INPUT SENSITIVITY</label>
-                 <input type="range" style="width:100%" min="50" max="200" value="100" oninput="updateSens(this.value)">
-            </div>
-        </div>
-    </div>
+<div class="container">
+<header>
+<h1>🎸 ESP32 Multi-Guitar System</h1>
+<div class="status-bar">
+<div class="status-item"><span class="dot green" id="wsDot"></span><span id="wsStatus">Connecting...</span></div>
+<div class="status-item"><span class="dot yellow" id="audioDot"></span><span id="audioStatus">Audio Off</span></div>
+<div class="status-item">📊 <span id="fps">0</span> FPS</div>
+<div class="status-item">⚡ <span id="latency">--</span>ms</div>
 </div>
+</header>
+
+<!-- Guitar Type Selector -->
+<div class="guitar-selector">
+<button class="guitar-btn active" onclick="selectGuitar(0)">🎸 Acoustic</button>
+<button class="guitar-btn" onclick="selectGuitar(1)">⚡ Electric</button>
+<button class="guitar-btn" onclick="selectGuitar(2)">🎻 Classical</button>
+<button class="guitar-btn" onclick="selectGuitar(3)">🎸 Bass</button>
+<button class="guitar-btn" onclick="selectGuitar(4)">🪕 Ukulele</button>
+</div>
+
+<div class="main-grid">
+<!-- Guitar Visualization -->
+<div class="card">
+<div class="card-title">🎮 3D Guitar - Strings React to Motion</div>
+<canvas id="guitarCanvas"></canvas>
+</div>
+
+<!-- Controls -->
+<div class="card">
+<div class="card-title">🎵 String Control Panel</div>
+
+<!-- String indicators -->
+<div class="strings-panel" id="stringsPanel">
+  <div class="string-ind" id="s6" style="--str-color:#ff6b6b"><div class="note">E</div><div class="hz">82Hz</div></div>
+  <div class="string-ind" id="s5" style="--str-color:#ffa502"><div class="note">A</div><div class="hz">110Hz</div></div>
+  <div class="string-ind" id="s4" style="--str-color:#ffe66d"><div class="note">D</div><div class="hz">147Hz</div></div>
+  <div class="string-ind" id="s3" style="--str-color:#7bed9f"><div class="note">G</div><div class="hz">196Hz</div></div>
+  <div class="string-ind" id="s2" style="--str-color:#70a1ff"><div class="note">B</div><div class="hz">247Hz</div></div>
+  <div class="string-ind" id="s1" style="--str-color:#a29bfe"><div class="note">E</div><div class="hz">330Hz</div></div>
+</div>
+
+<!-- Chord Display -->
+<div class="chord-display">
+<div class="chord-name" id="chordDisplay">Open</div>
+<div class="guitar-type-label" id="guitarTypeLabel">Acoustic Guitar</div>
+</div>
+
+<!-- Audio -->
+<div class="audio-section">
+<button class="audio-btn" id="audioBtn" onclick="toggleAudio()">
+<span>🔊</span> TAP TO ENABLE SOUND
+</button>
+</div>
+
+<!-- Stats -->
+<div class="stats-row">
+<div class="stat-box"><div class="stat-val" id="strumCount">0</div><div class="stat-lbl">Strums</div></div>
+<div class="stat-box"><div class="stat-val" id="noteCount">0</div><div class="stat-lbl">Notes</div></div>
+<div class="stat-box"><div class="stat-val" id="activeCount">0</div><div class="stat-lbl">Strings</div></div>
+<div class="stat-box"><div class="stat-val" id="accelVal">1.00</div><div class="stat-lbl">Accel G</div></div>
+</div>
+
+<!-- Motion Display -->
+<div class="motion-section">
+<div class="motion-row">
+<span class="motion-label">Roll:</span>
+<div class="motion-bar">
+<div class="motion-fill" id="rollFill" style="background:#ff6b6b;left:50%;width:0%;"></div>
+</div>
+<span class="motion-val" id="rollVal">0°</span>
+</div>
+<div class="motion-row">
+<span class="motion-label">Pitch:</span>
+<div class="motion-bar">
+<div class="motion-fill" id="pitchFill" style="background:#4ecdc4;left:50%;width:0%;"></div>
+</div>
+<span class="motion-val" id="pitchVal">0°</span>
+</div>
+<div class="motion-row">
+<span class="motion-label">Strum:</span>
+<div class="motion-bar">
+<div class="motion-fill" id="strumFill" style="background:#ffd700;left:0%;width:0%;"></div>
+</div>
+<span class="motion-val" id="strumVal">0%</span>
+</div>
+</div>
+
+<!-- Sensitivity -->
+<div class="sensitivity-section">
+<label>🎚️ Sensitivity: <span id="sensVal">100</span>%</label>
+<input type="range" id="sensSlider" min="30" max="200" value="100" oninput="setSensitivity(this.value)">
+</div>
+
+</div>
+</div>
+</div>
+
+<div class="info-bar">
+<span>Tilt ← → to select strings</span>
+<span>Shake to strum!</span>
+<span id="guitarInfo">6 strings | Standard E tuning</span>
+</div>
+
 <script>
-)rawliteral";
+// ═══════════════════════════════════════════════════════════════
+// CONFIGURATION
+// ═══════════════════════════════════════════════════════════════
 
-const char webpage_part2[] PROGMEM = R"rawliteral(
-// ==========================================
-// 🧠 ELECTRIC BRAIN - PHYSICS ENGINE (JS)
-// ==========================================
+const guitarTypes = [
+  {
+    name: 'Acoustic',
+    label: 'Acoustic Guitar',
+    strings: 6,
+    tuning: ['E2','A2','D3','G3','B3','E4'],
+    freqs: [82.41, 110.00, 146.83, 196.00, 246.94, 329.63],
+    bodyColor: '#8B4513',
+    bodyColor2: '#5D3A1A',
+    neckColor: '#654321',
+    soundHole: true,
+    pickups: false,
+    waveform: 'triangle',
+    bodyShape: 'dreadnought'
+  },
+  {
+    name: 'Electric',
+    label: 'Electric Guitar',
+    strings: 6,
+    tuning: ['E2','A2','D3','G3','B3','E4'],
+    freqs: [82.41, 110.00, 146.83, 196.00, 246.94, 329.63],
+    bodyColor: '#1a1a2e',
+    bodyColor2: '#0f0f1a',
+    neckColor: '#3d2817',
+    soundHole: false,
+    pickups: true,
+    waveform: 'sawtooth',
+    bodyShape: 'stratocaster'
+  },
+  {
+    name: 'Classical',
+    label: 'Classical Guitar',
+    strings: 6,
+    tuning: ['E2','A2','D3','G3','B3','E4'],
+    freqs: [82.41, 110.00, 146.83, 196.00, 246.94, 329.63],
+    bodyColor: '#DEB887',
+    bodyColor2: '#D2691E',
+    neckColor: '#8B4513',
+    soundHole: true,
+    pickups: false,
+    waveform: 'sine',
+    bodyShape: 'classical'
+  },
+  {
+    name: 'Bass',
+    label: 'Bass Guitar',
+    strings: 4,
+    tuning: ['E1','A1','D2','G2'],
+    freqs: [41.20, 55.00, 73.42, 98.00],
+    bodyColor: '#2c2c54',
+    bodyColor2: '#1a1a3a',
+    neckColor: '#4a3728',
+    soundHole: false,
+    pickups: true,
+    waveform: 'sine',
+    bodyShape: 'precision'
+  },
+  {
+    name: 'Ukulele',
+    label: 'Ukulele',
+    strings: 4,
+    tuning: ['G4','C4','E4','A4'],
+    freqs: [392.00, 261.63, 329.63, 440.00],
+    bodyColor: '#DEB887',
+    bodyColor2: '#CD853F',
+    neckColor: '#8B4513',
+    soundHole: true,
+    pickups: false,
+    waveform: 'triangle',
+    bodyShape: 'ukulele'
+  }
+];
 
-// Global State
+let currentGuitar = 0;
+let stringCount = 6;
+
+// String colors
+const stringColors = ['#ff6b6b', '#ffa502', '#ffe66d', '#7bed9f', '#70a1ff', '#a29bfe'];
+
+// State
 let ws;
-let audioCtx;
 let audioEnabled = false;
-let lastFrameTime = 0;
+let audioCtx;
+let sensitivity = 1.0;
+
+// Data
+let roll = 0, pitch = 0;
+let stringStates = [false, false, false, false, false, false];
+let stringVibration = [0, 0, 0, 0, 0, 0];
+let strumIntensity = 0;
+
+// Stats
+let strumCount = 0;
+let noteCount = 0;
 let frameCount = 0;
+let updateCount = 0;
+let lastFpsTime = Date.now();
 
-// Physics State
-const physics = {
-    roll: 0,
-    pitch: 0,
-    strings: [0,0,0,0,0,0], // 0 = idle, 1 = vibrating
-    stringActive: [false, false, false, false, false, false],
-    decay: 0.92
-};
+// ═══════════════════════════════════════════════════════════════
+// GUITAR SELECTION
+// ═══════════════════════════════════════════════════════════════
 
-// Scope Data
-const scopeData = new Array(100).fill(0);
-
-// Colors
-const colors = ['#ff0055', '#ff5500', '#ffaa00', '#00ff55', '#00ccff', '#aa00ff'];
-
-function init() {
-    connectWS();
-    initVisuals();
-    renderLoop();
-    setInterval(updateStats, 1000);
+function selectGuitar(idx) {
+  currentGuitar = idx;
+  const g = guitarTypes[idx];
+  stringCount = g.strings;
+  
+  // Update UI
+  document.querySelectorAll('.guitar-btn').forEach((btn, i) => {
+    btn.classList.toggle('active', i === idx);
+  });
+  
+  document.getElementById('guitarTypeLabel').textContent = g.label;
+  document.getElementById('guitarInfo').textContent = `${g.strings} strings | ${g.name} tuning`;
+  
+  // Update string indicators
+  const panel = document.getElementById('stringsPanel');
+  panel.innerHTML = '';
+  
+  for (let i = 0; i < g.strings; i++) {
+    const div = document.createElement('div');
+    div.className = 'string-ind';
+    div.id = 's' + (g.strings - i);
+    div.style.setProperty('--str-color', stringColors[i % 6]);
+    div.innerHTML = `<div class="note">${g.tuning[i]}</div><div class="hz">${Math.round(g.freqs[i])}Hz</div>`;
+    panel.appendChild(div);
+  }
+  
+  // Reset string states
+  stringStates = new Array(6).fill(false);
+  stringVibration = new Array(6).fill(0);
+  
+  // Notify ESP32
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({guitarType: idx}));
+  }
 }
+
+// ═══════════════════════════════════════════════════════════════
+// WEBSOCKET
+// ═══════════════════════════════════════════════════════════════
 
 function connectWS() {
-    const statusText = document.getElementById('ws-text');
-    const led = document.getElementById('ws-led');
-    
-    statusText.innerText = "CONNECTING...";
-    led.className = "led warn";
-
-    // Attempt to connect to the hosting ESP32
-    ws = new WebSocket('ws://' + window.location.hostname + ':81');
-
-    ws.onopen = () => {
-        statusText.innerText = "ONLINE";
-        led.className = "led on";
-        console.log("WS Connected");
-    };
-
-    ws.onclose = () => {
-        statusText.innerText = "OFFLINE";
-        led.className = "led off";
-        setTimeout(connectWS, 2000);
-    };
-
-    ws.onmessage = (e) => {
-        const data = JSON.parse(e.data);
-        processTelemetry(data);
-    };
+  ws = new WebSocket('ws://' + location.hostname + ':81');
+  
+  ws.onopen = () => {
+    document.getElementById('wsDot').className = 'dot green';
+    document.getElementById('wsStatus').textContent = 'Connected';
+  };
+  
+  ws.onclose = () => {
+    document.getElementById('wsDot').className = 'dot red';
+    document.getElementById('wsStatus').textContent = 'Reconnecting...';
+    setTimeout(connectWS, 1500);
+  };
+  
+  ws.onmessage = (e) => {
+    const t0 = performance.now();
+    try {
+      processData(JSON.parse(e.data));
+      document.getElementById('latency').textContent = (performance.now() - t0).toFixed(1);
+      updateCount++;
+    } catch(err) { console.error(err); }
+  };
 }
 
-function processTelemetry(data) {
-    // Update Physics State
-    physics.roll = data.roll || 0;
-    physics.pitch = data.pitch || 0;
+function processData(d) {
+  roll = d.roll || 0;
+  pitch = d.pitch || 0;
+  
+  // Update motion displays
+  document.getElementById('rollVal').textContent = roll.toFixed(0) + '°';
+  document.getElementById('pitchVal').textContent = pitch.toFixed(0) + '°';
+  document.getElementById('accelVal').textContent = (d.accelMag || 1).toFixed(2);
+  
+  // Motion bars
+  const rollFill = document.getElementById('rollFill');
+  const pitchFill = document.getElementById('pitchFill');
+  
+  if (roll >= 0) {
+    rollFill.style.left = '50%';
+    rollFill.style.width = Math.min(roll, 50) + '%';
+  } else {
+    rollFill.style.left = (50 + roll) + '%';
+    rollFill.style.width = Math.min(-roll, 50) + '%';
+  }
+  
+  if (pitch >= 0) {
+    pitchFill.style.left = '50%';
+    pitchFill.style.width = Math.min(pitch, 50) + '%';
+  } else {
+    pitchFill.style.left = (50 + pitch) + '%';
+    pitchFill.style.width = Math.min(-pitch, 50) + '%';
+  }
+  
+  // Strum intensity
+  strumIntensity = Math.max(0, (d.accelMag || 1) - 1) * 100;
+  document.getElementById('strumFill').style.width = Math.min(strumIntensity, 100) + '%';
+  document.getElementById('strumVal').textContent = Math.round(strumIntensity) + '%';
+  
+  // Update string states
+  let activeCount = 0;
+  const g = guitarTypes[currentGuitar];
+  
+  for (let i = 0; i < g.strings; i++) {
+    const el = document.getElementById('s' + (g.strings - i));
+    if (!el) continue;
     
-    // UI Updates
-    document.getElementById('roll-val').innerText = physics.roll.toFixed(2) + '°';
-    document.getElementById('pitch-val').innerText = physics.pitch.toFixed(2) + '°';
-    document.getElementById('acc-val').innerText = (data.accelMag || 1).toFixed(2) + 'g';
-    document.getElementById('chord-disp').innerText = data.chord || "OPEN";
+    const wasActive = stringStates[i];
+    stringStates[i] = d.strings ? d.strings[i] : false;
     
-    // Scope Update
-    scopeData.push(data.gyroZ || 0);
-    scopeData.shift();
-
-    // String Logic
-    let activeIdx = "NONE";
-    for(let i=0; i<6; i++) {
-        // Did state change to active?
-        if (data.strings && data.strings[i] && !physics.stringActive[i]) {
-            // Pluck physics
-            physics.strings[i] = 1.0; 
-        }
-        physics.stringActive[i] = data.strings ? data.strings[i] : false;
-        
-        // Update DOM Indicators
-        const el = document.getElementById('str-'+i);
-        if(el) {
-            if(physics.stringActive[i]) {
-                el.classList.add('active');
-                activeIdx = i + 1;
-            } else {
-                el.classList.remove('active');
-            }
-        }
+    if (stringStates[i]) {
+      el.classList.add('active');
+      activeCount++;
+      if (!wasActive) stringVibration[i] = 1;
+    } else {
+      el.classList.remove('active');
     }
-    document.getElementById('active-str-idx').innerText = activeIdx;
-
-    // Strum Event
-    if(data.strum) {
-        document.getElementById('strum-count').innerText = parseInt(document.getElementById('strum-count').innerText) + 1;
-        document.getElementById('chord-disp').style.color = "#00ff55";
-        setTimeout(() => document.getElementById('chord-disp').style.color = "#fff", 100);
-        
-        // Trigger Audio
-        if(audioEnabled && data.playFreqs) {
-            data.playFreqs.forEach(f => {
-                if(f > 0) playSynth(f);
-            });
-        }
-        // Maximize vibration on strum
-        for(let i=0; i<6; i++) {
-            if(physics.stringActive[i]) physics.strings[i] = 1.5;
-        }
+  }
+  
+  document.getElementById('activeCount').textContent = activeCount;
+  document.getElementById('chordDisplay').textContent = d.chord || 'Open';
+  
+  // Handle strum
+  if (d.strum && d.playFreqs) {
+    strumCount++;
+    document.getElementById('strumCount').textContent = strumCount;
+    
+    const chordEl = document.getElementById('chordDisplay');
+    chordEl.classList.add('strumming');
+    setTimeout(() => chordEl.classList.remove('strumming'), 150);
+    
+    // Trigger vibration for active strings
+    for (let i = 0; i < g.strings; i++) {
+      if (stringStates[i]) {
+        stringVibration[i] = 1;
+      }
     }
+    
+    // Play audio
+    if (audioEnabled && d.playFreqs) {
+      d.playFreqs.forEach((freq) => {
+        if (freq > 0) {
+          playNote(freq, g.waveform);
+          noteCount++;
+        }
+      });
+      document.getElementById('noteCount').textContent = noteCount;
+    }
+  }
 }
 
-// ==========================================
-// 🔊 AUDIO ENGINE
-// ==========================================
+// ═══════════════════════════════════════════════════════════════
+// AUDIO
+// ═══════════════════════════════════════════════════════════════
+
 function toggleAudio() {
-    if(!audioEnabled) {
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        audioEnabled = true;
-        document.getElementById('audio-btn').innerText = "AUDIO ENGINE ACTIVE";
-        document.getElementById('audio-btn').style.background = "var(--primary)";
-        document.getElementById('audio-btn').style.color = "#000";
-        document.getElementById('audio-led').className = "led on";
-        playSynth(440); // Test beep
-    }
+  const btn = document.getElementById('audioBtn');
+  
+  if (!audioEnabled) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    audioEnabled = true;
+    btn.innerHTML = '<span>🔇</span> Sound Enabled';
+    btn.classList.add('active');
+    document.getElementById('audioDot').className = 'dot green';
+    document.getElementById('audioStatus').textContent = 'Audio On';
+    playNote(440, 'sine', 0.2);
+  } else {
+    audioEnabled = false;
+    btn.innerHTML = '<span>🔊</span> TAP TO ENABLE SOUND';
+    btn.classList.remove('active');
+    document.getElementById('audioDot').className = 'dot yellow';
+    document.getElementById('audioStatus').textContent = 'Audio Off';
+  }
 }
 
-function playSynth(freq) {
-    const osc = audioCtx.createOscillator();
-    const gain = audioCtx.createGain();
-    
-    osc.type = 'sawtooth';
-    osc.frequency.value = freq;
-    
-    // Envelope
-    gain.gain.setValueAtTime(0, audioCtx.currentTime);
-    gain.gain.linearRampToValueAtTime(0.1, audioCtx.currentTime + 0.01);
-    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.5);
-    
-    osc.connect(gain);
-    gain.connect(audioCtx.destination);
-    
-    osc.start();
-    osc.stop(audioCtx.currentTime + 0.5);
+function playNote(freq, waveform = 'triangle', duration = 0.6) {
+  if (!audioCtx) return;
+  
+  const now = audioCtx.currentTime;
+  const g = guitarTypes[currentGuitar];
+  
+  // Main oscillator
+  const osc1 = audioCtx.createOscillator();
+  const osc2 = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  
+  osc1.type = waveform;
+  osc1.frequency.setValueAtTime(freq, now);
+  
+  // Add harmonic for richness
+  osc2.type = 'sine';
+  osc2.frequency.setValueAtTime(freq * 2, now);
+  
+  const gain2 = audioCtx.createGain();
+  gain2.gain.setValueAtTime(0.15, now);
+  
+  // ADSR based on guitar type
+  let attack = 0.01, decay = 0.1, sustain = 0.7, release = duration;
+  
+  if (g.name === 'Electric') {
+    attack = 0.005; decay = 0.05; sustain = 0.8; release = duration * 1.2;
+  } else if (g.name === 'Classical') {
+    attack = 0.02; decay = 0.15; sustain = 0.5; release = duration * 0.8;
+  } else if (g.name === 'Bass') {
+    attack = 0.01; decay = 0.2; sustain = 0.6; release = duration * 1.5;
+  } else if (g.name === 'Ukulele') {
+    attack = 0.005; decay = 0.08; sustain = 0.4; release = duration * 0.5;
+  }
+  
+  const maxGain = 0.2 * sensitivity;
+  gain.gain.setValueAtTime(0, now);
+  gain.gain.linearRampToValueAtTime(maxGain, now + attack);
+  gain.gain.linearRampToValueAtTime(maxGain * sustain, now + attack + decay);
+  gain.gain.linearRampToValueAtTime(maxGain * sustain * 0.8, now + release * 0.7);
+  gain.gain.linearRampToValueAtTime(0, now + release);
+  
+  osc1.connect(gain);
+  osc2.connect(gain2);
+  gain2.connect(gain);
+  gain.connect(audioCtx.destination);
+  
+  osc1.start(now);
+  osc2.start(now);
+  osc1.stop(now + release + 0.1);
+  osc2.stop(now + release + 0.1);
 }
 
-function updateSens(val) {
-    if(ws) ws.send(JSON.stringify({sensitivity: val/100}));
+function setSensitivity(val) {
+  sensitivity = val / 100;
+  document.getElementById('sensVal').textContent = val;
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({sensitivity: sensitivity}));
+  }
 }
 
-// ==========================================
-// 🖌️ RENDER ENGINE
-// ==========================================
-function initVisuals() {
-    // Generate String Indicators
-    const viz = document.getElementById('string-viz');
-    const notes = ['E','A','D','G','B','E'];
-    viz.innerHTML = '';
-    for(let i=5; i>=0; i--) {
-        viz.innerHTML += `<div class="eng-string" id="str-${i}" data-note="${notes[i]}"><div class="vibe-line"></div></div>`;
-    }
+// ═══════════════════════════════════════════════════════════════
+// 3D GUITAR DRAWING
+// ═══════════════════════════════════════════════════════════════
+
+const canvas = document.getElementById('guitarCanvas');
+const ctx = canvas.getContext('2d');
+
+function resize() {
+  canvas.width = canvas.offsetWidth;
+  canvas.height = canvas.offsetHeight;
 }
-)rawliteral";
+resize();
+window.addEventListener('resize', resize);
 
-const char webpage_part3[] PROGMEM = R"rawliteral(
-function renderLoop() {
-    const canvas = document.getElementById('guitarCanvas');
-    const ctx = canvas.getContext('2d');
-    const w = canvas.width = canvas.offsetWidth;
-    const h = canvas.height = canvas.offsetHeight;
-    const time = Date.now();
+function drawGuitar() {
+  const w = canvas.width, h = canvas.height;
+  const cx = w / 2, cy = h / 2;
+  const g = guitarTypes[currentGuitar];
+  
+  ctx.clearRect(0, 0, w, h);
+  
+  // Scale based on canvas size
+  const scale = Math.min(w / 400, h / 600) * 0.85;
+  
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(scale, scale);
+  
+  // Draw guitar based on type (BODY DOES NOT MOVE!)
+  switch(g.bodyShape) {
+    case 'stratocaster':
+      drawElectricGuitar(g);
+      break;
+    case 'precision':
+      drawBassGuitar(g);
+      break;
+    case 'ukulele':
+      drawUkulele(g);
+      break;
+    case 'classical':
+      drawClassicalGuitar(g);
+      break;
+    default:
+      drawAcousticGuitar(g);
+  }
+  
+  ctx.restore();
+  
+  frameCount++;
+  requestAnimationFrame(drawGuitar);
+}
 
-    // Clear
-    ctx.clearRect(0,0,w,h);
-
-    // --- 3D Perspective Math ---
-    // Vanishing Point
-    const vpX = w/2;
-    const vpY = h * 0.2; 
-    
-    const neckWidthBottom = w * 0.6;
-    const neckWidthTop = w * 0.15;
-    const neckLen = h * 0.9;
-
-    // Apply User Rotation (Roll) to the scene
-    ctx.save();
-    ctx.translate(w/2, h/2);
-    ctx.rotate(physics.roll * Math.PI / 180);
-    ctx.translate(-w/2, -h/2);
-
-    // Draw Fretboard (Trapezoid for perspective)
-    const grad = ctx.createLinearGradient(0, h, 0, 0);
-    grad.addColorStop(0, '#2a2a3e');
-    grad.addColorStop(1, '#000');
-    
-    ctx.fillStyle = grad;
-    ctx.strokeStyle = 'var(--primary)';
-    ctx.lineWidth = 2;
-
+function drawAcousticGuitar(g) {
+  // Shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.2)';
+  ctx.beginPath();
+  ctx.ellipse(8, 50, 95, 120, 0, 0, Math.PI * 2);
+  ctx.fill();
+  
+  // Body
+  const bodyGrad = ctx.createRadialGradient(-20, -20, 10, 0, 30, 130);
+  bodyGrad.addColorStop(0, g.bodyColor);
+  bodyGrad.addColorStop(1, g.bodyColor2);
+  ctx.fillStyle = bodyGrad;
+  ctx.beginPath();
+  ctx.ellipse(0, 40, 90, 115, 0, 0, Math.PI * 2);
+  ctx.fill();
+  
+  // Edge highlight
+  ctx.strokeStyle = 'rgba(255,220,150,0.4)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  
+  // Sound hole
+  ctx.fillStyle = '#0a0a0a';
+  ctx.beginPath();
+  ctx.ellipse(0, 45, 38, 42, 0, 0, Math.PI * 2);
+  ctx.fill();
+  
+  // Rosette
+  ctx.strokeStyle = '#DAA520';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.ellipse(0, 45, 42, 46, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  
+  ctx.strokeStyle = '#B8860B';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.ellipse(0, 45, 50, 54, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  
+  // Neck
+  ctx.fillStyle = g.neckColor;
+  ctx.fillRect(-18, -200, 36, 170);
+  
+  // Fretboard
+  ctx.fillStyle = '#1a1a1a';
+  ctx.fillRect(-15, -200, 30, 170);
+  
+  // Frets
+  ctx.strokeStyle = '#c0c0c0';
+  ctx.lineWidth = 2;
+  for (let i = 0; i < 7; i++) {
     ctx.beginPath();
-    ctx.moveTo((w - neckWidthBottom)/2, h); // Bottom Left
-    ctx.lineTo((w + neckWidthBottom)/2, h); // Bottom Right
-    ctx.lineTo((w + neckWidthTop)/2, vpY);  // Top Right
-    ctx.lineTo((w - neckWidthTop)/2, vpY);  // Top Left
-    ctx.closePath();
+    ctx.moveTo(-15, -180 + i * 25);
+    ctx.lineTo(15, -180 + i * 25);
+    ctx.stroke();
+  }
+  
+  // Fret markers
+  ctx.fillStyle = '#F5DEB3';
+  [1, 3, 5].forEach(i => {
+    ctx.beginPath();
+    ctx.arc(0, -180 + i * 25 + 12, 4, 0, Math.PI * 2);
     ctx.fill();
-    ctx.stroke();
-
-    // Draw Frets
-    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
-    ctx.lineWidth = 1;
-    for(let i=0; i<12; i++) {
-        // Exponential spacing for frets
-        const y = h - (h - vpY) * (1 - Math.pow(0.94, i*1.5)); 
-        // Interpolate width at this Y
-        const progress = (y - vpY) / (h - vpY);
-        const currentWidth = neckWidthTop + (neckWidthBottom - neckWidthTop) * progress;
-        
-        ctx.beginPath();
-        ctx.moveTo((w - currentWidth)/2, y);
-        ctx.lineTo((w + currentWidth)/2, y);
-        ctx.stroke();
-    }
-
-    // Draw Strings with Physics
-    for(let i=0; i<6; i++) {
-        // Calculate X positions for this string
-        const strOffset = i / 5; // 0 to 1
-        
-        // Bottom X
-        const bX = (w - neckWidthBottom)/2 + 20 + (neckWidthBottom - 40) * strOffset;
-        // Top X
-        const tX = (w - neckWidthTop)/2 + 5 + (neckWidthTop - 10) * strOffset;
-
-        // Vibration Amplitude
-        let amp = 0;
-        if(physics.strings[i] > 0.01) {
-            amp = Math.sin(time * 0.1 + i) * physics.strings[i] * 10;
-            physics.strings[i] *= physics.decay; // Decay energy
-        }
-
-        ctx.strokeStyle = physics.stringActive[i] ? colors[i] : 'rgba(200,200,200,0.5)';
-        ctx.lineWidth = physics.stringActive[i] ? 3 : 1 + (i*0.3);
-        ctx.shadowBlur = physics.stringActive[i] ? 15 : 0;
-        ctx.shadowColor = colors[i];
-
-        ctx.beginPath();
-        ctx.moveTo(bX + amp, h);
-        ctx.lineTo(tX, vpY);
-        ctx.stroke();
-        ctx.shadowBlur = 0;
-    }
-
-    ctx.restore(); // Restore Rotation
-
-    // Draw Scope (Gyro Z)
-    drawScope();
-
-    frameCount++;
-    requestAnimationFrame(renderLoop);
-}
-
-function drawScope() {
-    const canvas = document.getElementById('scopeCanvas');
-    const ctx = canvas.getContext('2d');
-    const w = canvas.width = canvas.offsetWidth;
-    const h = canvas.height = canvas.offsetHeight;
-
-    ctx.strokeStyle = 'var(--secondary)';
-    ctx.lineWidth = 2;
+  });
+  
+  // Headstock
+  ctx.fillStyle = g.neckColor;
+  ctx.beginPath();
+  ctx.moveTo(-20, -200);
+  ctx.quadraticCurveTo(-25, -230, -22, -265);
+  ctx.lineTo(22, -265);
+  ctx.quadraticCurveTo(25, -230, 20, -200);
+  ctx.closePath();
+  ctx.fill();
+  
+  // Tuning pegs
+  for (let i = 0; i < 3; i++) {
+    ctx.fillStyle = '#c0c0c0';
     ctx.beginPath();
+    ctx.ellipse(-30, -220 - i * 15, 6, 6, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(30, -220 - i * 15, 6, 6, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  
+  // Bridge
+  ctx.fillStyle = '#1a1a1a';
+  ctx.fillRect(-35, 130, 70, 12);
+  
+  // Saddle
+  ctx.fillStyle = '#F5DEB3';
+  ctx.fillRect(-30, 128, 60, 4);
+  
+  // Draw strings (ONLY THESE MOVE!)
+  drawStrings(g, -260, 140);
+}
+
+function drawElectricGuitar(g) {
+  // Stratocaster-style body
+  ctx.fillStyle = 'rgba(0,0,0,0.15)';
+  ctx.beginPath();
+  ctx.moveTo(-70, -20);
+  ctx.bezierCurveTo(-100, 20, -95, 100, -60, 150);
+  ctx.bezierCurveTo(-20, 180, 40, 170, 70, 140);
+  ctx.bezierCurveTo(100, 100, 95, 20, 70, -20);
+  ctx.bezierCurveTo(50, -60, -30, -70, -70, -20);
+  ctx.fill();
+  
+  // Body
+  const bodyGrad = ctx.createLinearGradient(-80, 0, 80, 150);
+  bodyGrad.addColorStop(0, '#2a2a4a');
+  bodyGrad.addColorStop(0.5, g.bodyColor);
+  bodyGrad.addColorStop(1, g.bodyColor2);
+  ctx.fillStyle = bodyGrad;
+  ctx.beginPath();
+  ctx.moveTo(-65, -25);
+  ctx.bezierCurveTo(-95, 15, -90, 95, -55, 145);
+  ctx.bezierCurveTo(-15, 175, 35, 165, 65, 135);
+  ctx.bezierCurveTo(95, 95, 90, 15, 65, -25);
+  ctx.bezierCurveTo(45, -65, -35, -75, -65, -25);
+  ctx.fill();
+  
+  ctx.strokeStyle = 'rgba(100,100,150,0.5)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  
+  // Cutaway
+  ctx.fillStyle = g.bodyColor2;
+  ctx.beginPath();
+  ctx.moveTo(30, -60);
+  ctx.quadraticCurveTo(60, -40, 50, -10);
+  ctx.quadraticCurveTo(35, -30, 30, -60);
+  ctx.fill();
+  
+  // Pickups
+  for (let i = 0; i < 3; i++) {
+    ctx.fillStyle = '#111';
+    ctx.fillRect(-25, 20 + i * 40, 50, 15);
+    ctx.fillStyle = '#333';
+    for (let j = 0; j < 6; j++) {
+      ctx.beginPath();
+      ctx.arc(-18 + j * 7, 27 + i * 40, 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  
+  // Pickguard
+  ctx.fillStyle = 'rgba(200,200,200,0.1)';
+  ctx.beginPath();
+  ctx.moveTo(-60, 10);
+  ctx.quadraticCurveTo(-70, 80, -40, 140);
+  ctx.lineTo(30, 130);
+  ctx.quadraticCurveTo(40, 70, 30, 10);
+  ctx.closePath();
+  ctx.fill();
+  
+  // Controls
+  ctx.fillStyle = '#222';
+  ctx.beginPath();
+  ctx.arc(50, 100, 10, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(50, 130, 8, 0, Math.PI * 2);
+  ctx.fill();
+  
+  // Neck
+  ctx.fillStyle = g.neckColor;
+  ctx.fillRect(-16, -230, 32, 200);
+  
+  ctx.fillStyle = '#1a1a1a';
+  ctx.fillRect(-14, -230, 28, 200);
+  
+  // Frets
+  ctx.strokeStyle = '#b0b0b0';
+  ctx.lineWidth = 2;
+  for (let i = 0; i < 8; i++) {
+    ctx.beginPath();
+    ctx.moveTo(-14, -210 + i * 25);
+    ctx.lineTo(14, -210 + i * 25);
+    ctx.stroke();
+  }
+  
+  // Headstock
+  ctx.fillStyle = g.neckColor;
+  ctx.beginPath();
+  ctx.moveTo(-16, -230);
+  ctx.lineTo(-20, -280);
+  ctx.lineTo(20, -280);
+  ctx.lineTo(16, -230);
+  ctx.closePath();
+  ctx.fill();
+  
+  // Tuners
+  for (let i = 0; i < 6; i++) {
+    const x = i < 3 ? -28 : 28;
+    const y = -245 - (i % 3) * 12;
+    ctx.fillStyle = '#c0c0c0';
+    ctx.beginPath();
+    ctx.ellipse(x, y, 5, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  
+  // Bridge
+  ctx.fillStyle = '#c0c0c0';
+  ctx.fillRect(-30, 135, 60, 20);
+  
+  // Strings
+  drawStrings(g, -275, 145);
+}
+
+function drawBassGuitar(g) {
+  // P-Bass style
+  ctx.fillStyle = 'rgba(0,0,0,0.15)';
+  ctx.beginPath();
+  ctx.moveTo(-60, 0);
+  ctx.bezierCurveTo(-90, 40, -85, 120, -50, 170);
+  ctx.bezierCurveTo(-10, 200, 50, 190, 80, 150);
+  ctx.bezierCurveTo(100, 100, 90, 30, 60, 0);
+  ctx.bezierCurveTo(30, -40, -30, -50, -60, 0);
+  ctx.fill();
+  
+  // Body
+  const bodyGrad = ctx.createLinearGradient(-70, 0, 70, 170);
+  bodyGrad.addColorStop(0, g.bodyColor);
+  bodyGrad.addColorStop(1, g.bodyColor2);
+  ctx.fillStyle = bodyGrad;
+  ctx.beginPath();
+  ctx.moveTo(-55, -5);
+  ctx.bezierCurveTo(-85, 35, -80, 115, -45, 165);
+  ctx.bezierCurveTo(-5, 195, 45, 185, 75, 145);
+  ctx.bezierCurveTo(95, 95, 85, 25, 55, -5);
+  ctx.bezierCurveTo(25, -45, -25, -55, -55, -5);
+  ctx.fill();
+  
+  ctx.strokeStyle = 'rgba(100,100,200,0.3)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  
+  // Pickups
+  ctx.fillStyle = '#111';
+  ctx.fillRect(-20, 50, 40, 20);
+  ctx.fillRect(-20, 90, 40, 20);
+  
+  // Neck (longer for bass)
+  ctx.fillStyle = g.neckColor;
+  ctx.fillRect(-20, -280, 40, 270);
+  
+  ctx.fillStyle = '#1a1a1a';
+  ctx.fillRect(-17, -280, 34, 270);
+  
+  // Frets
+  ctx.strokeStyle = '#b0b0b0';
+  ctx.lineWidth = 2;
+  for (let i = 0; i < 9; i++) {
+    ctx.beginPath();
+    ctx.moveTo(-17, -260 + i * 30);
+    ctx.lineTo(17, -260 + i * 30);
+    ctx.stroke();
+  }
+  
+  // Headstock
+  ctx.fillStyle = g.neckColor;
+  ctx.beginPath();
+  ctx.moveTo(-20, -280);
+  ctx.lineTo(-25, -340);
+  ctx.lineTo(25, -340);
+  ctx.lineTo(20, -280);
+  ctx.closePath();
+  ctx.fill();
+  
+  // 4 tuners
+  for (let i = 0; i < 4; i++) {
+    const x = i < 2 ? -32 : 32;
+    const y = -300 - (i % 2) * 20;
+    ctx.fillStyle = '#c0c0c0';
+    ctx.beginPath();
+    ctx.ellipse(x, y, 7, 7, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  
+  // Bridge
+  ctx.fillStyle = '#c0c0c0';
+  ctx.fillRect(-25, 155, 50, 25);
+  
+  // Strings (4 strings, thicker)
+  drawStrings(g, -335, 165, true);
+}
+
+function drawClassicalGuitar(g) {
+  // Similar to acoustic but with wider neck
+  ctx.fillStyle = 'rgba(0,0,0,0.2)';
+  ctx.beginPath();
+  ctx.ellipse(8, 50, 100, 125, 0, 0, Math.PI * 2);
+  ctx.fill();
+  
+  // Body
+  const bodyGrad = ctx.createRadialGradient(-20, -20, 10, 0, 30, 140);
+  bodyGrad.addColorStop(0, g.bodyColor);
+  bodyGrad.addColorStop(1, g.bodyColor2);
+  ctx.fillStyle = bodyGrad;
+  ctx.beginPath();
+  ctx.ellipse(0, 40, 95, 120, 0, 0, Math.PI * 2);
+  ctx.fill();
+  
+  ctx.strokeStyle = 'rgba(255,220,150,0.5)';
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  
+  // Sound hole with ornate rosette
+  ctx.fillStyle = '#0a0a0a';
+  ctx.beginPath();
+  ctx.ellipse(0, 45, 40, 44, 0, 0, Math.PI * 2);
+  ctx.fill();
+  
+  // Multi-ring rosette
+  for (let i = 0; i < 3; i++) {
+    ctx.strokeStyle = i % 2 === 0 ? '#8B4513' : '#DEB887';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.ellipse(0, 45, 44 + i * 6, 48 + i * 6, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  
+  // Wider neck for classical
+  ctx.fillStyle = g.neckColor;
+  ctx.fillRect(-22, -200, 44, 170);
+  
+  ctx.fillStyle = '#1a1a1a';
+  ctx.fillRect(-19, -200, 38, 170);
+  
+  // Frets
+  ctx.strokeStyle = '#c0c0c0';
+  ctx.lineWidth = 2;
+  for (let i = 0; i < 7; i++) {
+    ctx.beginPath();
+    ctx.moveTo(-19, -180 + i * 25);
+    ctx.lineTo(19, -180 + i * 25);
+    ctx.stroke();
+  }
+  
+  // Slotted headstock (classical style)
+  ctx.fillStyle = g.neckColor;
+  ctx.beginPath();
+  ctx.moveTo(-22, -200);
+  ctx.lineTo(-25, -240);
+  ctx.lineTo(-25, -270);
+  ctx.lineTo(25, -270);
+  ctx.lineTo(25, -240);
+  ctx.lineTo(22, -200);
+  ctx.closePath();
+  ctx.fill();
+  
+  // Tuner slots
+  ctx.fillStyle = '#0a0a0a';
+  ctx.fillRect(-20, -265, 15, 20);
+  ctx.fillRect(5, -265, 15, 20);
+  
+  // Tuner buttons
+  for (let i = 0; i < 3; i++) {
+    ctx.fillStyle = '#F5DEB3';
+    ctx.beginPath();
+    ctx.ellipse(-28, -260 + i * 8, 4, 4, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(28, -260 + i * 8, 4, 4, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  
+  // Bridge
+  ctx.fillStyle = '#5D3A1A';
+  ctx.fillRect(-40, 130, 80, 18);
+  
+  // Tie block
+  ctx.fillStyle = '#F5DEB3';
+  ctx.fillRect(-35, 142, 70, 4);
+  
+  // Strings
+  drawStrings(g, -265, 140);
+}
+
+function drawUkulele(g) {
+  // Small body
+  ctx.fillStyle = 'rgba(0,0,0,0.2)';
+  ctx.beginPath();
+  ctx.ellipse(5, 30, 65, 80, 0, 0, Math.PI * 2);
+  ctx.fill();
+  
+  // Body
+  const bodyGrad = ctx.createRadialGradient(-15, -10, 5, 0, 20, 90);
+  bodyGrad.addColorStop(0, g.bodyColor);
+  bodyGrad.addColorStop(1, g.bodyColor2);
+  ctx.fillStyle = bodyGrad;
+  ctx.beginPath();
+  ctx.ellipse(0, 25, 60, 75, 0, 0, Math.PI * 2);
+  ctx.fill();
+  
+  ctx.strokeStyle = 'rgba(255,220,150,0.4)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  
+  // Sound hole
+  ctx.fillStyle = '#0a0a0a';
+  ctx.beginPath();
+  ctx.ellipse(0, 30, 25, 28, 0, 0, Math.PI * 2);
+  ctx.fill();
+  
+  ctx.strokeStyle = '#DAA520';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.ellipse(0, 30, 28, 31, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  
+  // Neck (shorter)
+  ctx.fillStyle = g.neckColor;
+  ctx.fillRect(-12, -140, 24, 120);
+  
+  ctx.fillStyle = '#1a1a1a';
+  ctx.fillRect(-10, -140, 20, 120);
+  
+  // Frets
+  ctx.strokeStyle = '#c0c0c0';
+  ctx.lineWidth = 2;
+  for (let i = 0; i < 5; i++) {
+    ctx.beginPath();
+    ctx.moveTo(-10, -125 + i * 22);
+    ctx.lineTo(10, -125 + i * 22);
+    ctx.stroke();
+  }
+  
+  // Headstock
+  ctx.fillStyle = g.neckColor;
+  ctx.beginPath();
+  ctx.moveTo(-14, -140);
+  ctx.quadraticCurveTo(-18, -160, -15, -185);
+  ctx.lineTo(15, -185);
+  ctx.quadraticCurveTo(18, -160, 14, -140);
+  ctx.closePath();
+  ctx.fill();
+  
+  // Tuners (4)
+  for (let i = 0; i < 2; i++) {
+    ctx.fillStyle = '#c0c0c0';
+    ctx.beginPath();
+    ctx.ellipse(-22, -155 - i * 15, 5, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(22, -155 - i * 15, 5, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  
+  // Bridge
+  ctx.fillStyle = '#5D3A1A';
+  ctx.fillRect(-25, 85, 50, 10);
+  
+  // Strings (4)
+  drawStrings(g, -180, 90);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// STRING DRAWING - ONLY THESE MOVE BASED ON SENSOR DATA!
+// ═══════════════════════════════════════════════════════════════
+
+function drawStrings(g, startY, endY, isBass = false) {
+  const numStrings = g.strings;
+  const stringSpacing = isBass ? 12 : (numStrings === 4 ? 8 : 7);
+  const totalWidth = (numStrings - 1) * stringSpacing;
+  const startX = -totalWidth / 2;
+  
+  for (let i = 0; i < numStrings; i++) {
+    const x = startX + i * stringSpacing;
+    const isActive = stringStates[i];
+    const vibAmp = stringVibration[i] * (isBass ? 15 : 10);
+    const vibSpeed = 0.015 + i * 0.003;
+    const thickness = isBass ? (3 - i * 0.4) : (2 - i * 0.2);
     
-    for(let i=0; i<scopeData.length; i++) {
-        const x = (i / scopeData.length) * w;
-        // Normalize roughly -250 to 250 range to height
-        const y = h/2 + (scopeData[i] / 500) * h;
-        if(i===0) ctx.moveTo(x,y);
-        else ctx.lineTo(x,y);
+    // Glow effect when active
+    if (isActive || vibAmp > 0.5) {
+      ctx.strokeStyle = stringColors[i % 6];
+      ctx.lineWidth = thickness + 6;
+      ctx.globalAlpha = 0.3 * Math.max(stringVibration[i], isActive ? 0.5 : 0);
+      ctx.beginPath();
+      ctx.moveTo(x, startY);
+      
+      for (let y = startY; y <= endY; y += 5) {
+        const progress = (y - startY) / (endY - startY);
+        const envelope = Math.sin(progress * Math.PI);
+        const vib = Math.sin(Date.now() * vibSpeed + y * 0.02 + i) * vibAmp * envelope;
+        ctx.lineTo(x + vib, y);
+      }
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+    
+    // Main string
+    const stringGrad = ctx.createLinearGradient(x, startY, x, endY);
+    if (isActive || vibAmp > 0.1) {
+      stringGrad.addColorStop(0, stringColors[i % 6]);
+      stringGrad.addColorStop(0.5, '#ffffff');
+      stringGrad.addColorStop(1, stringColors[i % 6]);
+    } else {
+      stringGrad.addColorStop(0, 'rgba(220,220,220,0.9)');
+      stringGrad.addColorStop(0.5, 'rgba(255,255,255,0.95)');
+      stringGrad.addColorStop(1, 'rgba(200,200,200,0.8)');
+    }
+    
+    ctx.strokeStyle = stringGrad;
+    ctx.lineWidth = thickness;
+    ctx.beginPath();
+    ctx.moveTo(x, startY);
+    
+    // Draw string with vibration
+    for (let y = startY; y <= endY; y += 4) {
+      const progress = (y - startY) / (endY - startY);
+      const envelope = Math.sin(progress * Math.PI);
+      const vib = Math.sin(Date.now() * vibSpeed + y * 0.02 + i * 0.5) * vibAmp * envelope;
+      ctx.lineTo(x + vib, y);
     }
     ctx.stroke();
+    
+    // Decay vibration
+    if (stringVibration[i] > 0) {
+      stringVibration[i] *= 0.96;
+      if (stringVibration[i] < 0.01) stringVibration[i] = 0;
+    }
+  }
 }
 
-function updateStats() {
-    document.getElementById('fps-counter').innerText = frameCount;
+// ═══════════════════════════════════════════════════════════════
+// FPS COUNTER
+// ═══════════════════════════════════════════════════════════════
+
+function updateFps() {
+  const now = Date.now();
+  if (now - lastFpsTime >= 1000) {
+    document.getElementById('fps').textContent = frameCount;
     frameCount = 0;
+    lastFpsTime = now;
+  }
+  setTimeout(updateFps, 100);
 }
 
-window.onload = init;
+// ═══════════════════════════════════════════════════════════════
+// STARTUP
+// ═══════════════════════════════════════════════════════════════
+
+connectWS();
+drawGuitar();
+updateFps();
 </script>
 </body>
 </html>
 )rawliteral";
 
-// ==========================================
-// 📡 ESP32 BACKEND LOGIC
-// ==========================================
-
 void webSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length) {
   if (type == WStype_TEXT) {
+    // Handle messages from browser (guitar type, sensitivity)
     String msg = String((char*)payload);
+    if (msg.indexOf("guitarType") > 0) {
+      // Parse guitar type
+      int idx = msg.indexOf(":");
+      if (idx > 0) {
+        int type = msg.substring(idx + 1).toInt();
+        currentGuitarType = constrain(type, 0, 4);
+        stringCount = (currentGuitarType == 3 || currentGuitarType == 4) ? 4 : 6;
+        Serial.printf("🎸 Guitar changed to type %d (%d strings)\n", currentGuitarType, stringCount);
+      }
+    }
     if (msg.indexOf("sensitivity") > 0) {
       int idx = msg.indexOf(":");
       if (idx > 0) {
         sensitivity = msg.substring(idx + 1).toFloat();
-        Serial.printf("🎚️ Sensitivity set to: %.2f\n", sensitivity);
+        Serial.printf("🎚️ Sensitivity: %.2f\n", sensitivity);
       }
     }
   }
@@ -667,44 +1457,51 @@ void setup() {
   Serial.begin(115200);
   delay(500);
   
-  // Audio Setup (Core 3.0 Compatible)
+  Serial.println("\n╔═══════════════════════════════════════════╗");
+  Serial.println("║   ESP32 Multi-Guitar System v5.0         ║");
+  Serial.println("║   Acoustic | Electric | Classical        ║");
+  Serial.println("║   Bass | Ukulele                         ║");
+  Serial.println("╚═══════════════════════════════════════════╝\n");
+  
+  // Buzzer
+  pinMode(BUZZER_PIN, OUTPUT);
   ledcAttach(BUZZER_PIN, 1000, 8);
   
-  // IMU Setup
+  // I2C
   Wire.begin(I2C_SDA, I2C_SCL);
   Wire.setClock(400000);
+  
+  // MPU6500
   int err = mpu.init(calib, IMU_ADDRESS);
   if (err != 0) {
-    Serial.printf("Error MPU6500: %d\n", err);
-    while (1) delay(100);
+    Serial.printf("✗ MPU6500 failed: %d\n", err);
+    while (1) delay(1000);
   }
+  Serial.println("✓ MPU6500 OK");
   mpu.setAccelRange(4);
   mpu.setGyroRange(500);
   
-  // WiFi Setup
+  // WiFi
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
-  Serial.print("Connecting to WiFi");
+  Serial.print("⏳ WiFi");
   while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
+    delay(300);
     Serial.print(".");
   }
+  Serial.printf("\n✓ Connected! Open: http://%s\n", WiFi.localIP().toString().c_str());
   
-  // ⚠️ IMPORTANT: PRINT IP FOR USER ⚠️
-  Serial.println("\n=============================================");
-  Serial.print("✅ CONNECTED! IP ADDRESS: ");
-  Serial.println(WiFi.localIP());
-  Serial.println("=============================================");
-
-  // Start Services
+  // Servers
   webSocket.begin();
   webSocket.onEvent(webSocketEvent);
   
   server.on("/", []() {
-    String fullPage = String(webpage_part1) + String(webpage_part2) + String(webpage_part3);
-    server.send(200, "text/html", fullPage);
+    server.send_P(200, "text/html", webpage);
   });
   server.begin();
+  
+  Serial.println("\n🎸 Ready! Select guitar type in browser");
+  Serial.println("   Tilt to select strings, shake to strum!\n");
 }
 
 void loop() {
@@ -713,13 +1510,11 @@ void loop() {
   
   unsigned long now = millis();
   
-  // Sensor Loop (approx 125Hz)
   if (now - lastSensorUpdate >= 8) {
     lastSensorUpdate = now;
     updateSensor();
   }
   
-  // Broadcast Loop (approx 40Hz)
   if (now - lastBroadcast >= 25) {
     lastBroadcast = now;
     broadcastData();
@@ -738,36 +1533,83 @@ void updateSensor() {
   gyroY = gyroData.gyroY;
   gyroZ = gyroData.gyroZ;
   
-  // Calculate Orientation
+  // Calculate orientation
   roll = atan2(accelX, accelZ) * 180.0 / PI;
   pitch = atan2(accelY, sqrt(accelX * accelX + accelZ * accelZ)) * 180.0 / PI;
   
   accelMag = sqrt(accelX * accelX + accelY * accelY + accelZ * accelZ);
   gyroMag = sqrt(gyroX * gyroX + gyroY * gyroY + gyroZ * gyroZ);
   
+  // Update string selection based on roll
   updateStringSelection();
+  
+  // Detect chord
   detectChord();
 }
 
 void updateStringSelection() {
-  // Reset states
+  // Reset strings
   for (int i = 0; i < 6; i++) {
     stringActive[i] = false;
+    stringVelocity[i] = 0;
   }
   
-  // Map Roll angle to strings (Simple linear mapping for stability)
-  float rollLimit = 45.0; 
-  float val = constrain(roll, -rollLimit, rollLimit);
-  // Map -45 to 45 -> 0 to 5
-  int targetStr = map((long)val, -rollLimit, rollLimit, 0, 5);
+  activeStringCount = 0;
   
-  // Logic: Highlight the target string and maybe neighbors if roll is fast
-  stringActive[targetStr] = true;
+  // Map roll to string selection
+  // For 6 strings: -45° to +45° maps to strings 0-5
+  // For 4 strings: -30° to +30° maps to strings 0-3
   
-  // If moving fast (roll shake), activate neighbors
-  if (abs(roll) > 10) {
-      if(targetStr > 0) stringActive[targetStr-1] = true;
-      if(targetStr < 5) stringActive[targetStr+1] = true;
+  float rollRange = (stringCount == 4) ? 30.0 : 45.0;
+  float normalizedRoll = constrain(roll, -rollRange, rollRange);
+  
+  // Calculate center string
+  float stringFloat = ((normalizedRoll + rollRange) / (2 * rollRange)) * (stringCount - 1);
+  int centerString = constrain((int)round(stringFloat), 0, stringCount - 1);
+  
+  // Activate center string
+  stringActive[centerString] = true;
+  stringVelocity[centerString] = 1.0;
+  activeStringCount = 1;
+  
+  // Add adjacent strings based on roll magnitude (wider strum)
+  float rollMag = abs(roll);
+  
+  if (rollMag > 15) {
+    // Add one adjacent string
+    if (roll < 0 && centerString > 0) {
+      stringActive[centerString - 1] = true;
+      stringVelocity[centerString - 1] = 0.8;
+      activeStringCount++;
+    }
+    if (roll > 0 && centerString < stringCount - 1) {
+      stringActive[centerString + 1] = true;
+      stringVelocity[centerString + 1] = 0.8;
+      activeStringCount++;
+    }
+  }
+  
+  if (rollMag > 30) {
+    // Add more strings
+    for (int i = 0; i < stringCount; i++) {
+      if (!stringActive[i]) {
+        int dist = abs(i - centerString);
+        if (dist <= 2) {
+          stringActive[i] = true;
+          stringVelocity[i] = 1.0 - (dist * 0.2);
+          activeStringCount++;
+        }
+      }
+    }
+  }
+  
+  if (rollMag > 40) {
+    // Full strum - all strings
+    for (int i = 0; i < stringCount; i++) {
+      stringActive[i] = true;
+      stringVelocity[i] = 1.0 - (abs(i - centerString) * 0.1);
+    }
+    activeStringCount = stringCount;
   }
 }
 
@@ -776,75 +1618,110 @@ void detectChord() {
   if (now - lastChordChange < 150) return;
   
   String newChord = currentChord;
+  int newIdx = currentChordIndex;
   
-  // Simple Chord Logic based on Pitch (Tilting neck up/down)
-  if (pitch > 35) newChord = "G Major";
-  else if (pitch < -35) newChord = "D Major";
-  else if (pitch > 15) newChord = "C Major";
-  else if (pitch < -15) newChord = "A Minor";
-  else newChord = "Open E";
+  if (pitch > 35) {
+    newChord = "G"; newIdx = 2;
+  } else if (pitch < -35) {
+    newChord = "D"; newIdx = 3;
+  } else if (pitch > 20) {
+    newChord = "C"; newIdx = 1;
+  } else if (pitch < -20) {
+    newChord = "Am"; newIdx = 5;
+  } else if (abs(roll) > 35) {
+    newChord = "Em"; newIdx = 4;
+  } else if (abs(pitch) < 10 && abs(roll) < 10) {
+    newChord = "Open"; newIdx = 0;
+  } else {
+    newChord = "Dm"; newIdx = 6;
+  }
   
   if (newChord != currentChord) {
     currentChord = newChord;
+    currentChordIndex = newIdx;
     lastChordChange = now;
-    // Map chord string logic here if needed
   }
 }
 
 void broadcastData() {
   unsigned long now = millis();
   
-  // Strum Detection
+  // Strum detection
   float accelChange = abs(accelMag - lastAccelMag);
   lastAccelMag = accelMag;
   
   bool strum = false;
-  // Threshold-based strumming
-  if ((accelChange > STRUM_THRESHOLD * sensitivity) || (gyroMag > GYRO_THRESHOLD * sensitivity)) {
-      if (now - lastStrumTime > STRUM_COOLDOWN) {
-          strum = true;
-          lastStrumTime = now;
-      }
+  
+  // Multi-method detection
+  if (accelMag > 1.0 + STRUM_THRESHOLD * sensitivity) strum = true;
+  if (accelChange > STRUM_THRESHOLD * 0.4 * sensitivity) strum = true;
+  if (gyroMag > GYRO_THRESHOLD * sensitivity) strum = true;
+  
+  // Cooldown
+  if (strum && (now - lastStrumTime < STRUM_COOLDOWN)) {
+    strum = false;
+  }
+  
+  if (strum) {
+    lastStrumTime = now;
+    wasStrumming = true;
+  } else if (accelMag < 1.0 + STRUM_THRESHOLD * 0.3) {
+    wasStrumming = false;
   }
   
   // Build JSON
   String json = "{";
-  json += "\"roll\":" + String(roll, 2) + ",";
-  json += "\"pitch\":" + String(pitch, 2) + ",";
+  json += "\"roll\":" + String(roll, 1) + ",";
+  json += "\"pitch\":" + String(pitch, 1) + ",";
   json += "\"accelMag\":" + String(accelMag, 2) + ",";
-  json += "\"gyroZ\":" + String(gyroZ, 2) + ","; // For scope
+  json += "\"gyroMag\":" + String(gyroMag, 1) + ",";
   json += "\"chord\":\"" + currentChord + "\",";
   
-  // Strings Array
+  // String states
   json += "\"strings\":[";
   for (int i = 0; i < 6; i++) {
-    json += stringActive[i] ? "true" : "false";
+    json += (i < stringCount && stringActive[i]) ? "true" : "false";
     if (i < 5) json += ",";
   }
   json += "],";
   
   json += "\"strum\":" + String(strum ? "true" : "false");
   
-  // Audio Frequencies (If strummed)
+  // If strumming, include frequencies
   if (strum) {
     json += ",\"playFreqs\":[";
-    bool first = true;
-    for(int i=0; i<6; i++) {
-        if(stringActive[i]) {
-            if(!first) json += ",";
-            // Just sending base frequencies for now to keep logic simple
-            json += String(tunings[0][i]); 
-            first = false;
+    
+    for (int i = 0; i < stringCount; i++) {
+      if (stringActive[i]) {
+        float baseFreq = tunings[currentGuitarType][i];
+        int fret = chordFrets[currentChordIndex][i];
+        
+        if (fret >= 0) {
+          float freq = baseFreq * pow(1.059463, fret);
+          json += String(freq, 2);
+        } else {
+          json += "0";
         }
+      } else {
+        json += "0";
+      }
+      if (i < stringCount - 1) json += ",";
     }
     json += "]";
     
-    // Physical Feedback (Buzzer)
-    ledcWriteTone(BUZZER_PIN, 200); // Click sound
-    delay(10);
-    ledcWriteTone(BUZZER_PIN, 0);
+    // Play on buzzer
+    for (int i = stringCount - 1; i >= 0; i--) {
+      if (stringActive[i]) {
+        float freq = tunings[currentGuitarType][i] * pow(1.059463, chordFrets[currentChordIndex][i]);
+        ledcWriteTone(BUZZER_PIN, (int)freq);
+        delay(30);
+        ledcWriteTone(BUZZER_PIN, 0);
+        break;
+      }
+    }
   }
   
   json += "}";
+  
   webSocket.broadcastTXT(json);
 }
