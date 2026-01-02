@@ -4,9 +4,12 @@
 #include <WebSocketsServer.h>
 #include "FastIMU.h"
 
-// WiFi Credentials - CHANGE THESE!
-const char* ssid = "22";
-const char* password = "********";
+// ==========================================
+// ⚠️ USER CONFIGURATION - EDIT THIS! ⚠️
+// ==========================================
+const char* ssid = "YOUR_WIFI_NAME";      // <--- PUT YOUR WIFI NAME HERE
+const char* password = "YOUR_WIFI_PASSWORD"; // <--- PUT YOUR PASSWORD HERE
+// ==========================================
 
 // Pins
 #define I2C_SDA 21
@@ -62,7 +65,7 @@ int chordFrets[7][6] = {
   {-1, 0, 0, 2, 3, 1}   // Dm
 };
 
-// Sensitivity
+// Sensitivity & Thresholds
 float sensitivity = 1.0;
 const float STRUM_THRESHOLD = 0.25;
 const float GYRO_THRESHOLD = 25.0;
@@ -76,1364 +79,585 @@ unsigned long lastBroadcast = 0;
 float lastAccelMag = 1.0;
 bool wasStrumming = false;
 
-// --- Function Prototypes ---
+// Function Prototypes
 void updateSensor();
 void updateStringSelection();
 void detectChord();
 void broadcastData();
 void webSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length);
 
-// HTML/CSS/JavaScript Webpage - Part 1
-const char webpage[] PROGMEM = R"rawliteral(
+// ==========================================
+// 🎨 ENGINEERING UI - HTML/CSS/JS
+// ==========================================
+
+const char webpage_part1[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Electric Brain - ESP32 Guitar</title>
+<title>Electric Brain: ENG-Grade</title>
 <style>
+:root {
+    --bg: #050508;
+    --panel: rgba(15, 15, 25, 0.7);
+    --border: rgba(100, 200, 255, 0.15);
+    --primary: #00f0ff;
+    --secondary: #ff0055;
+    --text: #c0c0d0;
+    --grid: rgba(0, 240, 255, 0.03);
+}
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
-  font-family: 'Segoe UI', sans-serif;
-  background: linear-gradient(135deg, #0a0a1a 0%, #1a1a3a 50%, #0a1628 100%);
-  color: #fff;
-  min-height: 100vh;
-  overflow-x: hidden;
+    font-family: 'JetBrains Mono', 'Courier New', monospace;
+    background-color: var(--bg);
+    background-image: 
+        linear-gradient(var(--grid) 1px, transparent 1px),
+        linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size: 30px 30px;
+    color: var(--text);
+    overflow-x: hidden;
+    min-height: 100vh;
 }
-.container { max-width: 1600px; margin: 0 auto; padding: 12px; }
-header {
-  text-align: center;
-  padding: 15px 0;
-  border-bottom: 2px solid rgba(255,215,0,0.3);
-  margin-bottom: 12px;
-  background: rgba(0,0,0,0.3);
+.app-container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 10px;
 }
-.branding {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 15px;
-  margin-bottom: 8px;
+/* --- Electric Brain Logo Animation --- */
+.header-unit {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    padding: 15px 25px;
+    border-radius: 4px;
+    backdrop-filter: blur(10px);
+    margin-bottom: 20px;
+    box-shadow: 0 0 20px rgba(0,0,0,0.5);
+    position: relative;
+    overflow: hidden;
 }
-.logo {
-  width: 50px;
-  height: 50px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  border-radius: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 24px;
-  box-shadow: 0 4px 15px rgba(102,126,234,0.4);
-  animation: pulse 2s ease-in-out infinite;
+.header-unit::before {
+    content: ''; position: absolute; top:0; left:0; width: 4px; height: 100%;
+    background: var(--primary); box-shadow: 0 0 10px var(--primary);
 }
-@keyframes pulse {
-  0%, 100% { transform: scale(1); box-shadow: 0 4px 15px rgba(102,126,234,0.4); }
-  50% { transform: scale(1.05); box-shadow: 0 6px 20px rgba(102,126,234,0.6); }
+.brain-container {
+    position: relative;
+    width: 60px;
+    height: 60px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
 }
-h1 {
-  font-size: 2.2em;
-  background: linear-gradient(90deg, #ffd700, #ff6b6b, #4ecdc4, #ffd700);
-  background-size: 300% auto;
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  animation: shimmer 4s linear infinite;
+.brain-emoji { font-size: 30px; z-index: 2; filter: hue-rotate(180deg) brightness(1.5); }
+.electron-ring {
+    position: absolute; width: 100%; height: 100%;
+    border-radius: 50%; border: 1px solid rgba(0, 240, 255, 0.3);
+    animation: spin 2s linear infinite;
 }
-.subtitle {
-  font-size: 0.9em;
-  color: #667eea;
-  font-weight: 600;
-  letter-spacing: 2px;
+.electron-ring::after {
+    content: ''; position: absolute; top: -3px; left: 50%;
+    width: 6px; height: 6px; background: var(--primary);
+    border-radius: 50%; box-shadow: 0 0 10px var(--primary);
 }
-@keyframes shimmer { to { background-position: 300% center; } }
-.status-bar {
-  display: flex;
-  justify-content: center;
-  gap: 15px;
-  margin-top: 8px;
-  flex-wrap: wrap;
-  font-size: 0.85em;
+.electron-ring:nth-child(2) { animation-duration: 3s; transform: rotate(45deg); width: 80%; height: 80%; border-color: rgba(255, 0, 85, 0.3); }
+.electron-ring:nth-child(2)::after { background: var(--secondary); box-shadow: 0 0 10px var(--secondary); }
+@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+.title-block h1 { font-size: 1.5rem; color: #fff; letter-spacing: 2px; text-transform: uppercase; }
+.title-block .sub { font-size: 0.7rem; color: var(--primary); }
+
+.status-grid { display: flex; gap: 15px; font-size: 0.8rem; }
+.status-item { display: flex; align-items: center; gap: 6px; }
+.led { width: 8px; height: 8px; border-radius: 50%; background: #333; transition: all 0.3s; }
+.led.on { background: #0f0; box-shadow: 0 0 8px #0f0; }
+.led.warn { background: #ff0; box-shadow: 0 0 8px #ff0; }
+.led.off { background: #f00; box-shadow: 0 0 8px #f00; }
+
+/* --- Engineering Grid Layout --- */
+.main-dashboard {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 15px;
 }
-.status-item { display: flex; align-items: center; gap: 5px; }
-.dot { width: 8px; height: 8px; border-radius: 50%; }
-.dot.green { background: #0f0; box-shadow: 0 0 8px #0f0; }
-.dot.yellow { background: #ff0; box-shadow: 0 0 8px #ff0; }
-.dot.red { background: #f00; box-shadow: 0 0 8px #f00; }
-.guitar-selector {
-  display: flex;
-  justify-content: center;
-  gap: 8px;
-  margin-bottom: 15px;
-  flex-wrap: wrap;
+@media (max-width: 900px) { .main-dashboard { grid-template-columns: 1fr; } }
+
+.panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 15px;
+    position: relative;
 }
-.guitar-btn {
-  background: rgba(255,255,255,0.1);
-  border: 2px solid rgba(255,255,255,0.2);
-  color: #fff;
-  padding: 10px 20px;
-  border-radius: 25px;
-  cursor: pointer;
-  transition: all 0.3s;
-  font-size: 0.95em;
+.panel-header {
+    font-size: 0.8rem;
+    color: var(--primary);
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 8px;
+    margin-bottom: 12px;
+    display: flex;
+    justify-content: space-between;
 }
-.guitar-btn:hover {
-  background: rgba(255,255,255,0.2);
-  transform: translateY(-2px);
-}
-.guitar-btn.active {
-  background: linear-gradient(135deg, #ffd700, #ff8c00);
-  border-color: #ffd700;
-  color: #000;
-  font-weight: bold;
-  box-shadow: 0 4px 15px rgba(255,215,0,0.4);
-}
-.main-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 15px;
-  margin-bottom: 15px;
-}
-.graphs-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 15px;
-  margin-bottom: 15px;
-}
-.card {
-  background: rgba(255,255,255,0.05);
-  backdrop-filter: blur(10px);
-  border-radius: 15px;
-  padding: 15px;
-  border: 1px solid rgba(255,255,255,0.1);
-}
-.card-title {
-  font-size: 1em;
-  color: #ffd700;
-  margin-bottom: 10px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
+
+/* --- 3D Canvas --- */
 #guitarCanvas {
-  width: 100%;
-  height: 550px;
-  display: block;
-  border-radius: 10px;
-  background: radial-gradient(ellipse at center, rgba(30,30,50,0.8) 0%, rgba(10,10,20,0.9) 100%);
+    width: 100%;
+    height: 400px;
+    background: radial-gradient(circle at center, #1a1a2e 0%, #050508 100%);
+    border-radius: 4px;
+    border: 1px solid var(--border);
 }
-.graph-canvas {
-  width: 100%;
-  height: 280px;
-  display: block;
-  border-radius: 8px;
-  background: rgba(10,10,20,0.9);
-  border: 1px solid rgba(100,126,234,0.3);
+
+/* --- Controls & Metrics --- */
+.metrics-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 15px;
 }
-.graph-legend {
-  display: flex;
-  justify-content: center;
-  gap: 15px;
-  margin-top: 8px;
-  font-size: 0.75em;
+.metric-box {
+    background: rgba(0,0,0,0.3);
+    padding: 10px;
+    border-left: 2px solid var(--secondary);
 }
-.legend-item {
-  display: flex;
-  align-items: center;
-  gap: 5px;
+.metric-val { font-size: 1.4rem; color: #fff; font-weight: bold; }
+.metric-label { font-size: 0.7rem; opacity: 0.7; }
+
+.string-visualizer {
+    display: flex;
+    justify-content: space-between;
+    height: 100px;
+    margin: 15px 0;
+    gap: 4px;
 }
-.legend-color {
-  width: 20px;
-  height: 3px;
-  border-radius: 2px;
+.eng-string {
+    flex: 1;
+    background: rgba(255,255,255,0.05);
+    position: relative;
+    border-radius: 2px;
+    transition: 0.1s;
 }
-.demo-section {
-  background: linear-gradient(135deg, rgba(102,126,234,0.15), rgba(118,75,162,0.15));
-  border: 2px solid rgba(102,126,234,0.4);
-  border-radius: 12px;
-  padding: 15px;
-  margin: 12px 0;
+.eng-string.active { background: rgba(0, 240, 255, 0.2); box-shadow: 0 0 15px rgba(0, 240, 255, 0.1); }
+.eng-string::after {
+    content: attr(data-note);
+    position: absolute; bottom: 5px; left: 50%; transform: translateX(-50%);
+    font-size: 10px; color: #fff;
 }
-.demo-controls {
-  display: flex;
-  gap: 10px;
-  justify-content: center;
-  margin-bottom: 12px;
-  flex-wrap: wrap;
+.eng-string .vibe-line {
+    position: absolute; left: 50%; top: 0; bottom: 0; width: 2px;
+    background: var(--text); transform: translateX(-50%);
 }
-.demo-btn {
-  background: linear-gradient(135deg, #667eea, #764ba2);
-  border: none;
-  color: white;
-  padding: 10px 20px;
-  border-radius: 20px;
-  font-size: 0.95em;
-  cursor: pointer;
-  transition: all 0.3s;
-  display: flex;
-  align-items: center;
-  gap: 6px;
+
+.control-btn {
+    width: 100%;
+    padding: 12px;
+    background: linear-gradient(90deg, rgba(0,240,255,0.1), transparent);
+    border: 1px solid var(--primary);
+    color: var(--primary);
+    font-family: inherit;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: 0.2s;
+    margin-top: 5px;
 }
-.demo-btn:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 5px 20px rgba(102,126,234,0.5);
+.control-btn:hover { background: var(--primary); color: #000; box-shadow: 0 0 15px var(--primary); }
+
+.graph-container {
+    height: 80px;
+    background: rgba(0,0,0,0.2);
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 5px;
+    position: relative;
 }
-.demo-btn.active {
-  background: linear-gradient(135deg, #4ecdc4, #44a08d);
-  box-shadow: 0 0 20px rgba(78,205,196,0.6);
-}
-.demo-instruction {
-  background: rgba(0,0,0,0.4);
-  padding: 12px;
-  border-radius: 8px;
-  text-align: center;
-  font-size: 0.9em;
-  line-height: 1.6;
-  margin-top: 10px;
-  border-left: 4px solid #667eea;
-}
-.demo-step {
-  background: rgba(102,126,234,0.1);
-  padding: 8px 12px;
-  border-radius: 6px;
-  margin: 5px 0;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.step-num {
-  background: #667eea;
-  color: white;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.85em;
-  font-weight: bold;
-  flex-shrink: 0;
-}
-.strings-panel {
-  display: flex;
-  justify-content: center;
-  gap: 6px;
-  margin: 12px 0;
-}
-.string-ind {
-  width: 45px;
-  height: 90px;
-  border-radius: 8px;
-  background: rgba(0,0,0,0.4);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.1s;
-  border: 2px solid transparent;
-  position: relative;
-  overflow: hidden;
-}
-.string-ind::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 50%;
-  width: 3px;
-  height: 100%;
-  background: linear-gradient(to bottom, rgba(255,255,255,0.8), rgba(255,255,255,0.4));
-  transform: translateX(-50%);
-  transition: all 0.1s;
-}
-.string-ind.active {
-  border-color: var(--str-color, #ffd700);
-  background: rgba(255,215,0,0.15);
-  box-shadow: 0 0 15px var(--str-color, rgba(255,215,0,0.4));
-}
-.string-ind.active::before {
-  animation: stringVibrate 0.05s infinite alternate;
-  box-shadow: 0 0 10px var(--str-color, #ffd700);
-}
-@keyframes stringVibrate {
-  from { transform: translateX(-50%) translateX(-2px); }
-  to { transform: translateX(-50%) translateX(2px); }
-}
-.string-ind .note { font-size: 1.1em; font-weight: bold; z-index: 1; }
-.string-ind .hz { font-size: 0.65em; opacity: 0.5; z-index: 1; }
-.chord-display {
-  text-align: center;
-  padding: 15px 0;
-}
-.chord-name {
-  font-size: 2.8em;
-  font-weight: 800;
-  background: linear-gradient(135deg, #ffd700, #ffed4e);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  transition: all 0.15s;
-}
-.chord-name.strumming {
-  transform: scale(1.1);
-  filter: brightness(1.3);
-}
-.guitar-type-label {
-  font-size: 1em;
-  opacity: 0.7;
-  margin-top: 5px;
-}
-.audio-section {
-  background: linear-gradient(135deg, rgba(255,100,100,0.1), rgba(255,150,100,0.1));
-  border: 1px solid rgba(255,100,100,0.3);
-  border-radius: 12px;
-  padding: 15px;
-  text-align: center;
-  margin: 12px 0;
-}
-.audio-btn {
-  background: linear-gradient(135deg, #ff6b6b, #ee5a5a);
-  border: none;
-  color: white;
-  padding: 12px 35px;
-  border-radius: 25px;
-  font-size: 1.1em;
-  cursor: pointer;
-  transition: all 0.3s;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-.audio-btn:hover { transform: scale(1.05); box-shadow: 0 5px 20px rgba(255,100,100,0.4); }
-.audio-btn.active { background: linear-gradient(135deg, #4ecdc4, #44a08d); }
-.stats-row {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
-  margin-top: 12px;
-}
-.stat-box {
-  background: rgba(0,0,0,0.3);
-  padding: 10px 5px;
-  border-radius: 8px;
-  text-align: center;
-}
-.stat-val { font-size: 1.3em; font-weight: 700; color: #4ecdc4; font-family: monospace; }
-.stat-lbl { font-size: 0.7em; opacity: 0.5; margin-top: 2px; }
-.motion-section {
-  margin-top: 12px;
-}
-.motion-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 8px 0;
-}
-.motion-label { width: 50px; font-size: 0.85em; }
-.motion-bar {
-  flex: 1;
-  height: 12px;
-  background: rgba(0,0,0,0.4);
-  border-radius: 6px;
-  overflow: hidden;
-  position: relative;
-}
-.motion-bar::before {
-  content: '';
-  position: absolute;
-  left: 50%;
-  top: 0;
-  width: 2px;
-  height: 100%;
-  background: rgba(255,255,255,0.3);
-}
-.motion-fill {
-  height: 100%;
-  border-radius: 6px;
-  transition: all 0.1s;
-  position: absolute;
-}
-.motion-val { width: 60px; text-align: right; font-family: monospace; font-size: 0.85em; }
-.sensitivity-section {
-  margin-top: 12px;
-  padding: 12px;
-  background: rgba(0,0,0,0.2);
-  border-radius: 10px;
-}
-.sensitivity-section label { font-size: 0.9em; display: block; margin-bottom: 8px; }
-input[type="range"] {
-  width: 100%;
-  height: 6px;
-  border-radius: 3px;
-  background: #333;
-  -webkit-appearance: none;
-  outline: none;
-}
-input[type="range"]::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: #ffd700;
-  cursor: pointer;
-}
-.info-bar {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  background: rgba(0,0,0,0.85);
-  padding: 6px 15px;
-  display: flex;
-  justify-content: space-between;
-  font-size: 0.8em;
-  font-family: monospace;
-}
-@media (max-width: 1000px) {
-  .main-grid { grid-template-columns: 1fr; }
-  .graphs-grid { grid-template-columns: 1fr; }
-  #guitarCanvas { height: 400px; }
-  .graph-canvas { height: 220px; }
-}
+.graph-canvas { width: 100%; height: 100%; display: block; }
 </style>
 </head>
 <body>
-<div class="container">
-<header>
-<div class="branding">
-<div class="logo">🧠</div>
-<div>
-<h1>Electric Brain</h1>
-<div class="subtitle">ESP32 GUITAR SYSTEM</div>
-</div>
-</div>
-<div class="status-bar">
-<div class="status-item"><span class="dot green" id="wsDot"></span><span id="wsStatus">Connecting...</span></div>
-<div class="status-item"><span class="dot yellow" id="audioDot"></span><span id="audioStatus">Audio Off</span></div>
-<div class="status-item">📊 <span id="fps">0</span> FPS</div>
-<div class="status-item">⚡ <span id="latency">--</span>ms</div>
-</div>
-</header>
-<div class="guitar-selector">
-<button class="guitar-btn active" onclick="selectGuitar(0)">🎸 Acoustic</button>
-<button class="guitar-btn" onclick="selectGuitar(1)">⚡ Electric</button>
-<button class="guitar-btn" onclick="selectGuitar(2)">🎻 Classical</button>
-<button class="guitar-btn" onclick="selectGuitar(3)">🎸 Bass</button>
-<button class="guitar-btn" onclick="selectGuitar(4)">🪕 Ukulele</button>
-</div>
-<div class="main-grid">
-<div class="card">
-<div class="card-title">🎮 3D Realistic Guitar - Motion Responsive</div>
-<canvas id="guitarCanvas"></canvas>
-</div>
-<div class="card">
-<div class="card-title">🎵 Control Panel</div>
-<div class="strings-panel" id="stringsPanel">
-  <div class="string-ind" id="s6" style="--str-color:#ff6b6b"><div class="note">E</div><div class="hz">82Hz</div></div>
-  <div class="string-ind" id="s5" style="--str-color:#ffa502"><div class="note">A</div><div class="hz">110Hz</div></div>
-  <div class="string-ind" id="s4" style="--str-color:#ffe66d"><div class="note">D</div><div class="hz">147Hz</div></div>
-  <div class="string-ind" id="s3" style="--str-color:#7bed9f"><div class="note">G</div><div class="hz">196Hz</div></div>
-  <div class="string-ind" id="s2" style="--str-color:#70a1ff"><div class="note">B</div><div class="hz">247Hz</div></div>
-  <div class="string-ind" id="s1" style="--str-color:#a29bfe"><div class="note">E</div><div class="hz">330Hz</div></div>
-</div>
-<div class="chord-display">
-<div class="chord-name" id="chordDisplay">Open</div>
-<div class="guitar-type-label" id="guitarTypeLabel">Acoustic Guitar</div>
-</div>
-<div class="demo-section">
-<div class="card-title">📚 Beginner Demo Mode</div>
-<div class="demo-controls">
-<button class="demo-btn" id="demoBtn" onclick="toggleDemo()"><span>▶️</span> Start Tutorial</button>
-<button class="demo-btn" onclick="skipDemoStep()"><span>⏭️</span> Next Step</button>
-<button class="demo-btn" onclick="resetDemo()"><span>🔄</span> Reset</button>
-</div>
-<div class="demo-instruction" id="demoInstruction">Press "Start Tutorial" to learn how to play the air guitar!</div>
-<div id="demoSteps" style="display:none; margin-top:10px;">
-<div class="demo-step"><span class="step-num">1</span> Hold device horizontally like a guitar</div>
-<div class="demo-step"><span class="step-num">2</span> Tilt left/right to select strings</div>
-<div class="demo-step"><span class="step-num">3</span> Shake to strum and play</div>
-<div class="demo-step"><span class="step-num">4</span> Tilt forward/back to change chords</div>
-</div>
-</div>
-<div class="audio-section">
-<button class="audio-btn" id="audioBtn" onclick="toggleAudio()"><span>🔊</span> TAP TO ENABLE SOUND</button>
-</div>
-<div class="stats-row">
-<div class="stat-box"><div class="stat-val" id="strumCount">0</div><div class="stat-lbl">Strums</div></div>
-<div class="stat-box"><div class="stat-val" id="noteCount">0</div><div class="stat-lbl">Notes</div></div>
-<div class="stat-box"><div class="stat-val" id="activeCount">0</div><div class="stat-lbl">Strings</div></div>
-<div class="stat-box"><div class="stat-val" id="accelVal">1.00</div><div class="stat-lbl">Accel G</div></div>
-</div>
-<div class="motion-section">
-<div class="motion-row">
-<span class="motion-label">Roll:</span>
-<div class="motion-bar"><div class="motion-fill" id="rollFill" style="background:#ff6b6b;left:50%;width:0%;"></div></div>
-<span class="motion-val" id="rollVal">0°</span>
-</div>
-<div class="motion-row">
-<span class="motion-label">Pitch:</span>
-<div class="motion-bar"><div class="motion-fill" id="pitchFill" style="background:#4ecdc4;left:50%;width:0%;"></div></div>
-<span class="motion-val" id="pitchVal">0°</span>
-</div>
-<div class="motion-row">
-<span class="motion-label">Strum:</span>
-<div class="motion-bar"><div class="motion-fill" id="strumFill" style="background:#ffd700;left:0%;width:0%;"></div></div>
-<span class="motion-val" id="strumVal">0%</span>
-</div>
-</div>
-<div class="sensitivity-section">
-<label>🎚️ Sensitivity: <span id="sensVal">100</span>%</label>
-<input type="range" id="sensSlider" min="30" max="200" value="100" oninput="setSensitivity(this.value)">
-</div>
-</div>
-</div>
-<div class="card">
-<div class="card-title">📈 Engineering Grade Motion Analysis</div>
-</div>
-<div class="graphs-grid">
-<div class="card">
-<div class="card-title">⚡ Accelerometer X-Axis</div>
-<canvas id="accelXGraph" class="graph-canvas"></canvas>
-<div class="graph-legend">
-<div class="legend-item"><div class="legend-color" style="background:#ff6b6b;"></div><span>Accel X</span></div>
-<div class="legend-item"><div class="legend-color" style="background:#ffaa00;"></div><span>Avg</span></div>
-</div>
-</div>
-<div class="card">
-<div class="card-title">⚡ Accelerometer Y-Axis</div>
-<canvas id="accelYGraph" class="graph-canvas"></canvas>
-<div class="graph-legend">
-<div class="legend-item"><div class="legend-color" style="background:#4ecdc4;"></div><span>Accel Y</span></div>
-<div class="legend-item"><div class="legend-color" style="background:#00d4ff;"></div><span>Avg</span></div>
-</div>
-</div>
-<div class="card">
-<div class="card-title">⚡ Accelerometer Z-Axis</div>
-<canvas id="accelZGraph" class="graph-canvas"></canvas>
-<div class="graph-legend">
-<div class="legend-item"><div class="legend-color" style="background:#a29bfe;"></div><span>Accel Z</span></div>
-<div class="legend-item"><div class="legend-color" style="background:#d77fff;"></div><span>Avg</span></div>
-</div>
-</div>
-<div class="card">
-<div class="card-title">🔄 Gyroscope X-Axis</div>
-<canvas id="gyroXGraph" class="graph-canvas"></canvas>
-<div class="graph-legend">
-<div class="legend-item"><div class="legend-color" style="background:#ff6b6b;"></div><span>Gyro X</span></div>
-<div class="legend-item"><div class="legend-color" style="background:#ff9999;"></div><span>Peak</span></div>
-</div>
-</div>
-<div class="card">
-<div class="card-title">🔄 Gyroscope Y-Axis</div>
-<canvas id="gyroYGraph" class="graph-canvas"></canvas>
-<div class="graph-legend">
-<div class="legend-item"><div class="legend-color" style="background:#4ecdc4;"></div><span>Gyro Y</span></div>
-<div class="legend-item"><div class="legend-color" style="background:#7efff5;"></div><span>Peak</span></div>
-</div>
-</div>
-<div class="card">
-<div class="card-title">🔄 Gyroscope Z-Axis</div>
-<canvas id="gyroZGraph" class="graph-canvas"></canvas>
-<div class="graph-legend">
-<div class="legend-item"><div class="legend-color" style="background:#a29bfe;"></div><span>Gyro Z</span></div>
-<div class="legend-item"><div class="legend-color" style="background:#c9bbff;"></div><span>Peak</span></div>
-</div>
-</div>
-</div>
-</div>
-<div class="info-bar">
-<span>© Electric Brain - Advanced Motion Sensing</span>
-<span>Tilt ← → to select | Shake to strum</span>
-<span id="guitarInfo">6 strings | Standard E tuning</span>
+<div class="app-container">
+    
+    <div class="header-unit">
+        <div style="display:flex; align-items:center; gap:15px;">
+            <div class="brain-container">
+                <div class="electron-ring"></div>
+                <div class="electron-ring"></div>
+                <div class="brain-emoji">🧠</div>
+            </div>
+            <div class="title-block">
+                <h1>Electric Brain</h1>
+                <div class="sub">ENGINEERING GRADE PHYSICS ENGINE v5.0</div>
+            </div>
+        </div>
+        <div class="status-grid">
+            <div class="status-item"><div id="ws-led" class="led warn"></div><span id="ws-text">NET_INIT</span></div>
+            <div class="status-item"><div id="audio-led" class="led off"></div><span>AUDIO_DRV</span></div>
+            <div class="status-item">FPS: <span id="fps-counter">0</span></div>
+        </div>
+    </div>
+
+    <div class="main-dashboard">
+        <div class="panel">
+            <div class="panel-header">
+                <span>Real-Time Physics Rendering</span>
+                <span>Active String: <span id="active-str-idx">NONE</span></span>
+            </div>
+            <canvas id="guitarCanvas"></canvas>
+            <div style="margin-top:10px; font-size:0.8rem; color:var(--text); display:flex; gap:20px;">
+                <span>ROLL: <span id="roll-val" style="color:var(--primary)">0.00°</span></span>
+                <span>PITCH: <span id="pitch-val" style="color:var(--secondary)">0.00°</span></span>
+                <span>ACCEL: <span id="acc-val">1.00g</span></span>
+            </div>
+        </div>
+
+        <div class="panel">
+            <div class="panel-header"><span>Telemetry & Control</span></div>
+            
+            <div class="metrics-grid">
+                <div class="metric-box">
+                    <div class="metric-val" id="chord-disp">OPEN</div>
+                    <div class="metric-label">CURRENT CHORD</div>
+                </div>
+                <div class="metric-box">
+                    <div class="metric-val" id="strum-count">0</div>
+                    <div class="metric-label">TOTAL STRUMS</div>
+                </div>
+            </div>
+
+            <div class="string-visualizer" id="string-viz">
+                </div>
+
+            <div style="margin: 20px 0;">
+                <div class="panel-header"><span>Signal Analysis (Gyro Z)</span></div>
+                <div class="graph-container">
+                    <canvas id="scopeCanvas"></canvas>
+                </div>
+            </div>
+
+            <button class="control-btn" id="audio-btn" onclick="toggleAudio()">INITIALIZE AUDIO ENGINE</button>
+            <div style="margin-top:10px;">
+                 <label style="font-size:0.7rem;">INPUT SENSITIVITY</label>
+                 <input type="range" style="width:100%" min="50" max="200" value="100" oninput="updateSens(this.value)">
+            </div>
+        </div>
+    </div>
 </div>
 <script>
 )rawliteral";
 
 const char webpage_part2[] PROGMEM = R"rawliteral(
-const guitarTypes = [
-  {
-    name: 'Acoustic',
-    label: 'Acoustic Guitar',
-    strings: 6,
-    tuning: ['E2','A2','D3','G3','B3','E4'],
-    freqs: [82.41, 110.00, 146.83, 196.00, 246.94, 329.63],
-    bodyColor: '#8B4513',
-    bodyColor2: '#5D3A1A',
-    neckColor: '#654321',
-    soundHole: true,
-    pickups: false,
-    waveform: 'triangle',
-    bodyShape: 'dreadnought'
-  },
-  {
-    name: 'Electric',
-    label: 'Electric Guitar',
-    strings: 6,
-    tuning: ['E2','A2','D3','G3','B3','E4'],
-    freqs: [82.41, 110.00, 146.83, 196.00, 246.94, 329.63],
-    bodyColor: '#1a1a2e',
-    bodyColor2: '#0f0f1a',
-    neckColor: '#3d2817',
-    soundHole: false,
-    pickups: true,
-    waveform: 'sawtooth',
-    bodyShape: 'stratocaster'
-  },
-  {
-    name: 'Classical',
-    label: 'Classical Guitar',
-    strings: 6,
-    tuning: ['E2','A2','D3','G3','B3','E4'],
-    freqs: [82.41, 110.00, 146.83, 196.00, 246.94, 329.63],
-    bodyColor: '#DEB887',
-    bodyColor2: '#D2691E',
-    neckColor: '#8B4513',
-    soundHole: true,
-    pickups: false,
-    waveform: 'sine',
-    bodyShape: 'classical'
-  },
-  {
-    name: 'Bass',
-    label: 'Bass Guitar',
-    strings: 4,
-    tuning: ['E1','A1','D2','G2'],
-    freqs: [41.20, 55.00, 73.42, 98.00],
-    bodyColor: '#2c2c54',
-    bodyColor2: '#1a1a3a',
-    neckColor: '#4a3728',
-    soundHole: false,
-    pickups: true,
-    waveform: 'sine',
-    bodyShape: 'precision'
-  },
-  {
-    name: 'Ukulele',
-    label: 'Ukulele',
-    strings: 4,
-    tuning: ['G4','C4','E4','A4'],
-    freqs: [392.00, 261.63, 329.63, 440.00],
-    bodyColor: '#DEB887',
-    bodyColor2: '#CD853F',
-    neckColor: '#8B4513',
-    soundHole: true,
-    pickups: false,
-    waveform: 'triangle',
-    bodyShape: 'ukulele'
-  }
-];
+// ==========================================
+// 🧠 ELECTRIC BRAIN - PHYSICS ENGINE (JS)
+// ==========================================
 
-let currentGuitar = 0;
-let stringCount = 6;
-const stringColors = ['#ff6b6b', '#ffa502', '#ffe66d', '#7bed9f', '#70a1ff', '#a29bfe'];
-
+// Global State
 let ws;
-let audioEnabled = false;
 let audioCtx;
-let sensitivity = 1.0;
-
-let roll = 0, pitch = 0;
-let stringStates = [false, false, false, false, false, false];
-let stringVibration = [0, 0, 0, 0, 0, 0];
-let strumIntensity = 0;
-let accelXRaw = 0, accelYRaw = 0, accelZRaw = 0;
-let gyroXRaw = 0, gyroYRaw = 0, gyroZRaw = 0;
-
-let strumCount = 0;
-let noteCount = 0;
+let audioEnabled = false;
+let lastFrameTime = 0;
 let frameCount = 0;
-let updateCount = 0;
-let lastFpsTime = Date.now();
 
-// Missing variable definitions added here for safety
-const vibSpeed = 0.05;
-const vibAmp = 3.0;
+// Physics State
+const physics = {
+    roll: 0,
+    pitch: 0,
+    strings: [0,0,0,0,0,0], // 0 = idle, 1 = vibrating
+    stringActive: [false, false, false, false, false, false],
+    decay: 0.92
+};
 
-let demoActive = false;
-let demoStep = 0;
-const demoInstructions = [
-  "🎸 Welcome! Hold your device horizontally like a guitar neck",
-  "👈 Tilt LEFT slowly - watch the strings light up on the left side",
-  "👉 Now tilt RIGHT - see how different strings activate",
-  "📐 Tilt FORWARD (pitch up) - this selects chord variations",
-  "📐 Tilt BACKWARD (pitch down) - changes to different chords",
-  "💥 Time to STRUM! Shake the device quickly to play the strings",
-  "🎵 Try combining: Tilt to select strings, then shake to play!",
-  "🎯 Practice Mode: Play the C chord (tilt forward 20-35°) and strum",
-  "🎯 Now try G chord (tilt forward >35°) with a strong strum",
-  "🎉 Excellent! You're ready to rock! Practice makes perfect!"
-];
+// Scope Data
+const scopeData = new Array(100).fill(0);
 
-const GRAPH_BUFFER_SIZE = 150;
-let accelXData = new Array(GRAPH_BUFFER_SIZE).fill(0);
-let accelYData = new Array(GRAPH_BUFFER_SIZE).fill(0);
-let accelZData = new Array(GRAPH_BUFFER_SIZE).fill(0);
-let gyroXData = new Array(GRAPH_BUFFER_SIZE).fill(0);
-let gyroYData = new Array(GRAPH_BUFFER_SIZE).fill(0);
-let gyroZData = new Array(GRAPH_BUFFER_SIZE).fill(0);
+// Colors
+const colors = ['#ff0055', '#ff5500', '#ffaa00', '#00ff55', '#00ccff', '#aa00ff'];
 
-function selectGuitar(idx) {
-  currentGuitar = idx;
-  const g = guitarTypes[idx];
-  stringCount = g.strings;
-  
-  document.querySelectorAll('.guitar-btn').forEach((btn, i) => {
-    btn.classList.toggle('active', i === idx);
-  });
-  
-  document.getElementById('guitarTypeLabel').textContent = g.label;
-  document.getElementById('guitarInfo').textContent = `${g.strings} strings | ${g.name} tuning`;
-  
-  const panel = document.getElementById('stringsPanel');
-  panel.innerHTML = '';
-  
-  for (let i = 0; i < g.strings; i++) {
-    const div = document.createElement('div');
-    div.className = 'string-ind';
-    div.id = 's' + (g.strings - i);
-    div.style.setProperty('--str-color', stringColors[i % 6]);
-    div.innerHTML = `<div class="note">${g.tuning[i]}</div><div class="hz">${Math.round(g.freqs[i])}Hz</div>`;
-    panel.appendChild(div);
-  }
-  
-  stringStates = new Array(6).fill(false);
-  stringVibration = new Array(6).fill(0);
-  
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({guitarType: idx}));
-  }
+function init() {
+    connectWS();
+    initVisuals();
+    renderLoop();
+    setInterval(updateStats, 1000);
 }
 
 function connectWS() {
-  ws = new WebSocket('ws://' + location.hostname + ':81');
-  
-  ws.onopen = () => {
-    document.getElementById('wsDot').className = 'dot green';
-    document.getElementById('wsStatus').textContent = 'Connected';
-  };
-  
-  ws.onclose = () => {
-    document.getElementById('wsDot').className = 'dot red';
-    document.getElementById('wsStatus').textContent = 'Reconnecting...';
-    setTimeout(connectWS, 1500);
-  };
-  
-  ws.onmessage = (e) => {
-    const t0 = performance.now();
-    try {
-      processData(JSON.parse(e.data));
-      document.getElementById('latency').textContent = (performance.now() - t0).toFixed(1);
-      updateCount++;
-    } catch(err) { console.error(err); }
-  };
+    const statusText = document.getElementById('ws-text');
+    const led = document.getElementById('ws-led');
+    
+    statusText.innerText = "CONNECTING...";
+    led.className = "led warn";
+
+    // Attempt to connect to the hosting ESP32
+    ws = new WebSocket('ws://' + window.location.hostname + ':81');
+
+    ws.onopen = () => {
+        statusText.innerText = "ONLINE";
+        led.className = "led on";
+        console.log("WS Connected");
+    };
+
+    ws.onclose = () => {
+        statusText.innerText = "OFFLINE";
+        led.className = "led off";
+        setTimeout(connectWS, 2000);
+    };
+
+    ws.onmessage = (e) => {
+        const data = JSON.parse(e.data);
+        processTelemetry(data);
+    };
 }
 
-function processData(d) {
-  roll = d.roll || 0;
-  pitch = d.pitch || 0;
-  
-  accelXRaw = d.accelX || 0;
-  accelYRaw = d.accelY || 0;
-  accelZRaw = d.accelZ || 0;
-  gyroXRaw = d.gyroX || 0;
-  gyroYRaw = d.gyroY || 0;
-  gyroZRaw = d.gyroZ || 0;
-  
-  accelXData.shift();
-  accelXData.push(accelXRaw);
-  accelYData.shift();
-  accelYData.push(accelYRaw);
-  accelZData.shift();
-  accelZData.push(accelZRaw);
-  gyroXData.shift();
-  gyroXData.push(gyroXRaw);
-  gyroYData.shift();
-  gyroYData.push(gyroYRaw);
-  gyroZData.shift();
-  gyroZData.push(gyroZRaw);
-  
-  document.getElementById('rollVal').textContent = roll.toFixed(0) + '°';
-  document.getElementById('pitchVal').textContent = pitch.toFixed(0) + '°';
-  document.getElementById('accelVal').textContent = (d.accelMag || 1).toFixed(2);
-  
-  if (demoActive) {
-    checkDemoProgress();
-  }
-  
-  const rollFill = document.getElementById('rollFill');
-  const pitchFill = document.getElementById('pitchFill');
-  
-  if (roll >= 0) {
-    rollFill.style.left = '50%';
-    rollFill.style.width = Math.min(roll, 50) + '%';
-  } else {
-    rollFill.style.left = (50 + roll) + '%';
-    rollFill.style.width = Math.min(-roll, 50) + '%';
-  }
-  
-  if (pitch >= 0) {
-    pitchFill.style.left = '50%';
-    pitchFill.style.width = Math.min(pitch, 50) + '%';
-  } else {
-    pitchFill.style.left = (50 + pitch) + '%';
-    pitchFill.style.width = Math.min(-pitch, 50) + '%';
-  }
-  
-  strumIntensity = Math.max(0, (d.accelMag || 1) - 1) * 100;
-  document.getElementById('strumFill').style.width = Math.min(strumIntensity, 100) + '%';
-  document.getElementById('strumVal').textContent = Math.round(strumIntensity) + '%';
-  
-  let activeCount = 0;
-  const g = guitarTypes[currentGuitar];
-  
-  for (let i = 0; i < g.strings; i++) {
-    const el = document.getElementById('s' + (g.strings - i));
-    if (!el) continue;
+function processTelemetry(data) {
+    // Update Physics State
+    physics.roll = data.roll || 0;
+    physics.pitch = data.pitch || 0;
     
-    const wasActive = stringStates[i];
-    stringStates[i] = d.strings ? d.strings[i] : false;
+    // UI Updates
+    document.getElementById('roll-val').innerText = physics.roll.toFixed(2) + '°';
+    document.getElementById('pitch-val').innerText = physics.pitch.toFixed(2) + '°';
+    document.getElementById('acc-val').innerText = (data.accelMag || 1).toFixed(2) + 'g';
+    document.getElementById('chord-disp').innerText = data.chord || "OPEN";
     
-    if (stringStates[i]) {
-      el.classList.add('active');
-      activeCount++;
-      if (!wasActive) stringVibration[i] = 1;
-    } else {
-      el.classList.remove('active');
-    }
-  }
-  
-  document.getElementById('activeCount').textContent = activeCount;
-  document.getElementById('chordDisplay').textContent = d.chord || 'Open';
-  
-  if (d.strum && d.playFreqs) {
-    strumCount++;
-    document.getElementById('strumCount').textContent = strumCount;
-    
-    const chordEl = document.getElementById('chordDisplay');
-    chordEl.classList.add('strumming');
-    setTimeout(() => chordEl.classList.remove('strumming'), 150);
-    
-    for (let i = 0; i < g.strings; i++) {
-      if (stringStates[i]) {
-        stringVibration[i] = 1;
-      }
-    }
-    
-    if (audioEnabled && d.playFreqs) {
-      d.playFreqs.forEach((freq) => {
-        if (freq > 0) {
-          playNote(freq, g.waveform);
-          noteCount++;
+    // Scope Update
+    scopeData.push(data.gyroZ || 0);
+    scopeData.shift();
+
+    // String Logic
+    let activeIdx = "NONE";
+    for(let i=0; i<6; i++) {
+        // Did state change to active?
+        if (data.strings && data.strings[i] && !physics.stringActive[i]) {
+            // Pluck physics
+            physics.strings[i] = 1.0; 
         }
-      });
-      document.getElementById('noteCount').textContent = noteCount;
+        physics.stringActive[i] = data.strings ? data.strings[i] : false;
+        
+        // Update DOM Indicators
+        const el = document.getElementById('str-'+i);
+        if(el) {
+            if(physics.stringActive[i]) {
+                el.classList.add('active');
+                activeIdx = i + 1;
+            } else {
+                el.classList.remove('active');
+            }
+        }
     }
-  }
+    document.getElementById('active-str-idx').innerText = activeIdx;
+
+    // Strum Event
+    if(data.strum) {
+        document.getElementById('strum-count').innerText = parseInt(document.getElementById('strum-count').innerText) + 1;
+        document.getElementById('chord-disp').style.color = "#00ff55";
+        setTimeout(() => document.getElementById('chord-disp').style.color = "#fff", 100);
+        
+        // Trigger Audio
+        if(audioEnabled && data.playFreqs) {
+            data.playFreqs.forEach(f => {
+                if(f > 0) playSynth(f);
+            });
+        }
+        // Maximize vibration on strum
+        for(let i=0; i<6; i++) {
+            if(physics.stringActive[i]) physics.strings[i] = 1.5;
+        }
+    }
 }
 
+// ==========================================
+// 🔊 AUDIO ENGINE
+// ==========================================
 function toggleAudio() {
-  const btn = document.getElementById('audioBtn');
-  
-  if (!audioEnabled) {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    audioEnabled = true;
-    btn.innerHTML = '<span>🔇</span> Sound Enabled';
-    btn.classList.add('active');
-    document.getElementById('audioDot').className = 'dot green';
-    document.getElementById('audioStatus').textContent = 'Audio On';
-    playNote(440, 'sine', 0.2);
-  } else {
-    audioEnabled = false;
-    btn.innerHTML = '<span>🔊</span> TAP TO ENABLE SOUND';
-    btn.classList.remove('active');
-    document.getElementById('audioDot').className = 'dot yellow';
-    document.getElementById('audioStatus').textContent = 'Audio Off';
-  }
-}
-
-function playNote(freq, waveform = 'triangle', duration = 0.6) {
-  if (!audioCtx) return;
-  
-  const now = audioCtx.currentTime;
-  const g = guitarTypes[currentGuitar];
-  
-  const osc1 = audioCtx.createOscillator();
-  const osc2 = audioCtx.createOscillator();
-  const gain = audioCtx.createGain();
-  
-  osc1.type = waveform;
-  osc1.frequency.setValueAtTime(freq, now);
-  
-  osc2.type = 'sine';
-  osc2.frequency.setValueAtTime(freq * 2, now);
-  
-  const gain2 = audioCtx.createGain();
-  gain2.gain.setValueAtTime(0.15, now);
-  
-  let attack = 0.01, decay = 0.1, sustain = 0.7, release = duration;
-  
-  if (g.name === 'Electric') {
-    attack = 0.005; decay = 0.05; sustain = 0.8; release = duration * 1.2;
-  } else if (g.name === 'Classical') {
-    attack = 0.02; decay = 0.15; sustain = 0.5; release = duration * 0.8;
-  } else if (g.name === 'Bass') {
-    attack = 0.01; decay = 0.2; sustain = 0.6; release = duration * 1.5;
-  } else if (g.name === 'Ukulele') {
-    attack = 0.005; decay = 0.08; sustain = 0.4; release = duration * 0.5;
-  }
-  
-  const maxGain = 0.2 * sensitivity;
-  gain.gain.setValueAtTime(0, now);
-  gain.gain.linearRampToValueAtTime(maxGain, now + attack);
-  gain.gain.linearRampToValueAtTime(maxGain * sustain, now + attack + decay);
-  gain.gain.linearRampToValueAtTime(maxGain * sustain * 0.8, now + release * 0.7);
-  gain.gain.linearRampToValueAtTime(0, now + release);
-  
-  osc1.connect(gain);
-  osc2.connect(gain2);
-  gain2.connect(gain);
-  gain.connect(audioCtx.destination);
-  
-  osc1.start(now);
-  osc2.start(now);
-  osc1.stop(now + release + 0.1);
-  osc2.stop(now + release + 0.1);
-}
-
-function setSensitivity(val) {
-  sensitivity = val / 100;
-  document.getElementById('sensVal').textContent = val;
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({sensitivity: sensitivity}));
-  }
-}
-
-function toggleDemo() {
-  demoActive = !demoActive;
-  const btn = document.getElementById('demoBtn');
-  const stepsDiv = document.getElementById('demoSteps');
-  
-  if (demoActive) {
-    btn.innerHTML = '<span>⏸️</span> Pause Tutorial';
-    btn.classList.add('active');
-    demoStep = 0;
-    updateDemoInstruction();
-    stepsDiv.style.display = 'block';
-  } else {
-    btn.innerHTML = '<span>▶️</span> Start Tutorial';
-    btn.classList.remove('active');
-    stepsDiv.style.display = 'none';
-    document.getElementById('demoInstruction').textContent = 'Press "Start Tutorial" to learn how to play the air guitar!';
-  }
-}
-
-function updateDemoInstruction() {
-  if (demoStep < demoInstructions.length) {
-    document.getElementById('demoInstruction').textContent = `Step ${demoStep + 1}/${demoInstructions.length}: ${demoInstructions[demoStep]}`;
-  } else {
-    document.getElementById('demoInstruction').textContent = '🎉 Tutorial Complete! You\'re a pro now!';
-    demoActive = false;
-    document.getElementById('demoBtn').classList.remove('active');
-  }
-}
-
-function skipDemoStep() {
-  if (demoActive && demoStep < demoInstructions.length - 1) {
-    demoStep++;
-    updateDemoInstruction();
-  }
-}
-
-function resetDemo() {
-  demoStep = 0;
-  demoActive = false;
-  document.getElementById('demoBtn').innerHTML = '<span>▶️</span> Start Tutorial';
-  document.getElementById('demoBtn').classList.remove('active');
-  document.getElementById('demoSteps').style.display = 'none';
-  document.getElementById('demoInstruction').textContent = 'Press "Start Tutorial" to learn how to play the air guitar!';
-}
-
-function checkDemoProgress() {
-  if (!demoActive || demoStep >= demoInstructions.length) return;
-  
-  let advance = false;
-  
-  switch(demoStep) {
-    case 0:
-      if (Math.abs(pitch) < 30) advance = true;
-      break;
-    case 1:
-      if (roll < -15) advance = true;
-      break;
-    case 2:
-      if (roll > 15) advance = true;
-      break;
-    case 3:
-      if (pitch > 20) advance = true;
-      break;
-    case 4:
-      if (pitch < -20) advance = true;
-      break;
-    case 5:
-      if (strumIntensity > 30) advance = true;
-      break;
-    case 6:
-      if (Math.abs(roll) > 10 && strumIntensity > 20) advance = true;
-      break;
-    case 7:
-      if (pitch > 20 && pitch < 35 && strumIntensity > 25) advance = true;
-      break;
-    case 8:
-      if (pitch > 35 && strumIntensity > 30) advance = true;
-      break;
-  }
-  
-  if (advance) {
-    setTimeout(() => {
-      demoStep++;
-      updateDemoInstruction();
-    }, 500);
-  }
-}
-
-function drawEngineeringGraph(canvasId, data, color, avgColor, label, unit, range) {
-  const canvas = document.getElementById(canvasId);
-  if (!canvas) return;
-  
-  const ctx = canvas.getContext('2d');
-  const w = canvas.width;
-  const h = canvas.height;
-  
-  ctx.clearRect(0, 0, w, h);
-  
-  ctx.strokeStyle = 'rgba(100,126,234,0.15)';
-  ctx.lineWidth = 1;
-  
-  for (let i = 0; i <= 10; i++) {
-    const y = (h / 10) * i;
-    ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(w, y);
-    ctx.stroke();
-  }
-  
-  for (let i = 0; i <= 10; i++) {
-    const x = (w / 10) * i;
-    ctx.beginPath();
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, h);
-    ctx.stroke();
-  }
-  
-  ctx.strokeStyle = 'rgba(255,255,255,0.3)';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(0, h / 2);
-  ctx.lineTo(w, h / 2);
-  ctx.stroke();
-  
-  ctx.fillStyle = 'rgba(255,255,255,0.5)';
-  ctx.font = '10px monospace';
-  ctx.textAlign = 'right';
-  ctx.fillText(`+${range}${unit}`, w - 5, 15);
-  ctx.fillText(`0${unit}`, w - 5, h / 2 + 4);
-  ctx.fillText(`-${range}${unit}`, w - 5, h - 5);
-  
-  const avg = data.reduce((a, b) => a + b, 0) / data.length;
-  
-  const avgY = h / 2 - (avg / range) * (h / 2);
-  ctx.strokeStyle = avgColor;
-  ctx.lineWidth = 1;
-  ctx.setLineDash([5, 5]);
-  ctx.beginPath();
-  ctx.moveTo(0, avgY);
-  ctx.lineTo(w, avgY);
-  ctx.stroke();
-  ctx.setLineDash([]);
-  
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  
-  for (let i = 0; i < data.length; i++) {
-    const x = (i / (data.length - 1)) * w;
-    const y = h / 2 - (data[i] / range) * (h / 2);
-    
-    if (i === 0) {
-      ctx.moveTo(x, y);
-    } else {
-      ctx.lineTo(x, y);
+    if(!audioEnabled) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        audioEnabled = true;
+        document.getElementById('audio-btn').innerText = "AUDIO ENGINE ACTIVE";
+        document.getElementById('audio-btn').style.background = "var(--primary)";
+        document.getElementById('audio-btn').style.color = "#000";
+        document.getElementById('audio-led').className = "led on";
+        playSynth(440); // Test beep
     }
-  }
-  ctx.stroke();
-  
-  ctx.lineTo(w, h / 2);
-  ctx.lineTo(0, h / 2);
-  ctx.closePath();
-  
-  const gradient = ctx.createLinearGradient(0, 0, 0, h);
-  gradient.addColorStop(0, color + '40');
-  gradient.addColorStop(0.5, color + '10');
-  gradient.addColorStop(1, color + '40');
-  ctx.fillStyle = gradient;
-  ctx.fill();
-  
-  const lastVal = data[data.length - 1];
-  const lastY = h / 2 - (lastVal / range) * (h / 2);
-  ctx.fillStyle = color;
-  ctx.beginPath();
-  ctx.arc(w - 5, lastY, 4, 0, Math.PI * 2);
-  ctx.fill();
-  
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 12px monospace';
-  ctx.textAlign = 'left';
-  ctx.fillText(`${lastVal.toFixed(2)}${unit}`, 10, 20);
-  ctx.font = '10px monospace';
-  ctx.fillText(`Avg: ${avg.toFixed(2)}${unit}`, 10, 35);
-  ctx.fillText(`Peak: ${Math.max(...data).toFixed(2)}${unit}`, 10, 50);
 }
 
-function updateAllGraphs() {
-  drawEngineeringGraph('accelXGraph', accelXData, '#ff6b6b', '#ffaa00', 'Accel X', 'g', 2);
-  drawEngineeringGraph('accelYGraph', accelYData, '#4ecdc4', '#00d4ff', 'Accel Y', 'g', 2);
-  drawEngineeringGraph('accelZGraph', accelZData, '#a29bfe', '#d77fff', 'Accel Z', 'g', 2);
-  drawEngineeringGraph('gyroXGraph', gyroXData, '#ff6b6b', '#ff9999', 'Gyro X', '°/s', 250);
-  drawEngineeringGraph('gyroYGraph', gyroYData, '#4ecdc4', '#7efff5', 'Gyro Y', '°/s', 250);
-  drawEngineeringGraph('gyroZGraph', gyroZData, '#a29bfe', '#c9bbff', 'Gyro Z', '°/s', 250);
-  
-  requestAnimationFrame(updateAllGraphs);
+function playSynth(freq) {
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    
+    osc.type = 'sawtooth';
+    osc.frequency.value = freq;
+    
+    // Envelope
+    gain.gain.setValueAtTime(0, audioCtx.currentTime);
+    gain.gain.linearRampToValueAtTime(0.1, audioCtx.currentTime + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.5);
+    
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.5);
+}
+
+function updateSens(val) {
+    if(ws) ws.send(JSON.stringify({sensitivity: val/100}));
+}
+
+// ==========================================
+// 🖌️ RENDER ENGINE
+// ==========================================
+function initVisuals() {
+    // Generate String Indicators
+    const viz = document.getElementById('string-viz');
+    const notes = ['E','A','D','G','B','E'];
+    viz.innerHTML = '';
+    for(let i=5; i>=0; i--) {
+        viz.innerHTML += `<div class="eng-string" id="str-${i}" data-note="${notes[i]}"><div class="vibe-line"></div></div>`;
+    }
 }
 )rawliteral";
 
 const char webpage_part3[] PROGMEM = R"rawliteral(
-const canvas = document.getElementById('guitarCanvas');
-const ctx = canvas.getContext('2d');
+function renderLoop() {
+    const canvas = document.getElementById('guitarCanvas');
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width = canvas.offsetWidth;
+    const h = canvas.height = canvas.offsetHeight;
+    const time = Date.now();
 
-function resize() {
-  canvas.width = canvas.offsetWidth;
-  canvas.height = canvas.offsetHeight;
-}
-resize();
-window.addEventListener('resize', resize);
+    // Clear
+    ctx.clearRect(0,0,w,h);
 
-function drawGuitar() {
-  const w = canvas.width, h = canvas.height;
-  const cx = w / 2, cy = h / 2;
-  const g = guitarTypes[currentGuitar];
-  ctx.clearRect(0, 0, w, h);
-  const scale = Math.min(w / 400, h / 600) * 0.85;
-  ctx.save();
-  ctx.translate(cx, cy);
-  ctx.scale(scale, scale);
-  switch(g.bodyShape) {
-    case 'stratocaster':
-      drawElectricGuitar(g);
-      break;
-    case 'precision':
-      drawBassGuitar(g);
-      break;
-    case 'ukulele':
-      drawUkulele(g);
-      break;
-    case 'classical':
-      drawClassicalGuitar(g);
-      break;
-    default:
-      drawAcousticGuitar(g);
-  }
-  ctx.restore();
-  frameCount++;
-  requestAnimationFrame(drawGuitar);
-}
+    // --- 3D Perspective Math ---
+    // Vanishing Point
+    const vpX = w/2;
+    const vpY = h * 0.2; 
+    
+    const neckWidthBottom = w * 0.6;
+    const neckWidthTop = w * 0.15;
+    const neckLen = h * 0.9;
 
-function drawAcousticGuitar(g) {
-  ctx.save();
-  ctx.shadowColor = 'rgba(0,0,0,0.5)';
-  ctx.shadowBlur = 20;
-  ctx.shadowOffsetX = 10;
-  ctx.shadowOffsetY = 15;
-  ctx.fillStyle = 'rgba(0,0,0,0.1)';
-  ctx.beginPath();
-  ctx.ellipse(0, 40, 90, 115, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
-  const bodyGrad = ctx.createRadialGradient(-30, -10, 20, 0, 40, 140);
-  bodyGrad.addColorStop(0, '#b8956a');
-  bodyGrad.addColorStop(0.3, g.bodyColor);
-  bodyGrad.addColorStop(0.7, g.bodyColor2);
-  bodyGrad.addColorStop(1, '#6b5639');
-  ctx.fillStyle = bodyGrad;
-  ctx.beginPath();
-  ctx.ellipse(0, 40, 90, 115, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(90,60,30,0.15)';
-  ctx.lineWidth = 1;
-  for (let i = 0; i < 8; i++) {
+    // Apply User Rotation (Roll) to the scene
+    ctx.save();
+    ctx.translate(w/2, h/2);
+    ctx.rotate(physics.roll * Math.PI / 180);
+    ctx.translate(-w/2, -h/2);
+
+    // Draw Fretboard (Trapezoid for perspective)
+    const grad = ctx.createLinearGradient(0, h, 0, 0);
+    grad.addColorStop(0, '#2a2a3e');
+    grad.addColorStop(1, '#000');
+    
+    ctx.fillStyle = grad;
+    ctx.strokeStyle = 'var(--primary)';
+    ctx.lineWidth = 2;
+
     ctx.beginPath();
-    ctx.ellipse(0, 40, 88 - i * 3, 113 - i * 4, 0, 0, Math.PI * 2);
+    ctx.moveTo((w - neckWidthBottom)/2, h); // Bottom Left
+    ctx.lineTo((w + neckWidthBottom)/2, h); // Bottom Right
+    ctx.lineTo((w + neckWidthTop)/2, vpY);  // Top Right
+    ctx.lineTo((w - neckWidthTop)/2, vpY);  // Top Left
+    ctx.closePath();
+    ctx.fill();
     ctx.stroke();
-  }
-  ctx.strokeStyle = '#F5DEB3';
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.ellipse(0, 40, 90, 115, 0, 0, Math.PI * 2);
-  ctx.stroke();
-  ctx.strokeStyle = '#8B4513';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.ellipse(0, 40, 87, 112, 0, 0, Math.PI * 2);
-  ctx.stroke();
-  const highlight = ctx.createLinearGradient(-50, -20, 50, 100);
-  highlight.addColorStop(0, 'rgba(255,255,200,0.3)');
-  highlight.addColorStop(0.5, 'rgba(255,255,200,0.05)');
-  highlight.addColorStop(1, 'rgba(255,255,200,0)');
-  ctx.fillStyle = highlight;
-  ctx.beginPath();
-  ctx.ellipse(0, 40, 90, 115, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = '#000';
-  ctx.beginPath();
-  ctx.ellipse(0, 45, 38, 42, 0, 0, Math.PI * 2);
-  ctx.fill();
-  const holeGrad = ctx.createRadialGradient(0, 45, 30, 0, 45, 42);
-  holeGrad.addColorStop(0, 'rgba(0,0,0,0.9)');
-  holeGrad.addColorStop(1, 'rgba(50,30,20,0.8)');
-  ctx.fillStyle = holeGrad;
-  ctx.fill();
-  const rosetteColors = ['#DAA520', '#8B4513', '#DEB887', '#8B6914', '#DAA520'];
-  rosetteColors.forEach((color, i) => {
-    ctx.strokeStyle = color;
-    ctx.lineWidth = i % 2 === 0 ? 3 : 2;
-    ctx.beginPath();
-    ctx.ellipse(0, 45, 42 + i * 4, 46 + i * 4, 0, 0, Math.PI * 2);
-    ctx.stroke();
-  });
-  ctx.strokeStyle = '#8B4513';
-  ctx.lineWidth = 1;
-  for (let i = 0; i < 12; i++) {
-    const angle = (i / 12) * Math.PI * 2;
-    ctx.beginPath();
-    ctx.moveTo(Math.cos(angle) * 42, 45 + Math.sin(angle) * 46);
-    ctx.lineTo(Math.cos(angle) * 50, 45 + Math.sin(angle) * 54);
-    ctx.stroke();
-  }
-  const neckGrad = ctx.createLinearGradient(-18, 0, 18, 0);
-  neckGrad.addColorStop(0, '#5a4028');
-  neckGrad.addColorStop(0.1, g.neckColor);
-  neckGrad.addColorStop(0.5, '#7a5838');
-  neckGrad.addColorStop(0.9, g.neckColor);
-  neckGrad.addColorStop(1, '#5a4028');
-  ctx.fillStyle = neckGrad;
-  ctx.fillRect(-18, -200, 36, 170);
-  const fretGrad = ctx.createLinearGradient(-15, 0, 15, 0);
-  fretGrad.addColorStop(0, '#0a0a0a');
-  fretGrad.addColorStop(0.5, '#1a1a1a');
-  fretGrad.addColorStop(1, '#0a0a0a');
-  ctx.fillStyle = fretGrad;
-  ctx.fillRect(-15, -200, 30, 170);
-  ctx.strokeStyle = '#c0c0c0';
-  ctx.shadowColor = 'rgba(0,0,0,0.5)';
-  ctx.shadowBlur = 2;
-  for (let i = 0; i < 7; i++) {
-    ctx.lineWidth = 2.5;
-    ctx.beginPath();
-    const y = -180 + i * 25;
-    const width = 15 + i * 0.5;
-    ctx.moveTo(-width, y);
-    ctx.lineTo(width, y);
-    ctx.stroke();
-    ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+
+    // Draw Frets
+    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
     ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(-width, y + 1);
-    ctx.lineTo(width, y + 1);
-    ctx.stroke();
-    ctx.strokeStyle = '#c0c0c0';
-  }
-  ctx.shadowBlur = 0;
-  ctx.fill(); 
-  drawStrings(g);
+    for(let i=0; i<12; i++) {
+        // Exponential spacing for frets
+        const y = h - (h - vpY) * (1 - Math.pow(0.94, i*1.5)); 
+        // Interpolate width at this Y
+        const progress = (y - vpY) / (h - vpY);
+        const currentWidth = neckWidthTop + (neckWidthBottom - neckWidthTop) * progress;
+        
+        ctx.beginPath();
+        ctx.moveTo((w - currentWidth)/2, y);
+        ctx.lineTo((w + currentWidth)/2, y);
+        ctx.stroke();
+    }
+
+    // Draw Strings with Physics
+    for(let i=0; i<6; i++) {
+        // Calculate X positions for this string
+        const strOffset = i / 5; // 0 to 1
+        
+        // Bottom X
+        const bX = (w - neckWidthBottom)/2 + 20 + (neckWidthBottom - 40) * strOffset;
+        // Top X
+        const tX = (w - neckWidthTop)/2 + 5 + (neckWidthTop - 10) * strOffset;
+
+        // Vibration Amplitude
+        let amp = 0;
+        if(physics.strings[i] > 0.01) {
+            amp = Math.sin(time * 0.1 + i) * physics.strings[i] * 10;
+            physics.strings[i] *= physics.decay; // Decay energy
+        }
+
+        ctx.strokeStyle = physics.stringActive[i] ? colors[i] : 'rgba(200,200,200,0.5)';
+        ctx.lineWidth = physics.stringActive[i] ? 3 : 1 + (i*0.3);
+        ctx.shadowBlur = physics.stringActive[i] ? 15 : 0;
+        ctx.shadowColor = colors[i];
+
+        ctx.beginPath();
+        ctx.moveTo(bX + amp, h);
+        ctx.lineTo(tX, vpY);
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+    }
+
+    ctx.restore(); // Restore Rotation
+
+    // Draw Scope (Gyro Z)
+    drawScope();
+
+    frameCount++;
+    requestAnimationFrame(renderLoop);
 }
 
-function drawStrings(g) {
-  const startY = -200;
-  const endY = 100;
-  
-  for(let i=0; i<g.strings; i++) {
-    const x = -15 + (i * (30 / (g.strings - 1)));
-    ctx.strokeStyle = 'rgba(200,200,200,0.8)';
-    ctx.lineWidth = 1 + (g.strings-i)*0.2;
-    ctx.beginPath();
-)rawliteral";
+function drawScope() {
+    const canvas = document.getElementById('scopeCanvas');
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width = canvas.offsetWidth;
+    const h = canvas.height = canvas.offsetHeight;
 
-const char webpage_part4[] PROGMEM = R"rawliteral(
-    ctx.moveTo(x, startY);
+    ctx.strokeStyle = 'var(--secondary)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
     
-    for (let y = startY; y <= endY; y += 4) {
-      const progress = (y - startY) / (endY - startY);
-      const envelope = Math.sin(progress * Math.PI);
-      const vib = Math.sin(Date.now() * vibSpeed + y * 0.02 + i * 0.5) * vibAmp * envelope;
-      ctx.lineTo(x + vib, y);
+    for(let i=0; i<scopeData.length; i++) {
+        const x = (i / scopeData.length) * w;
+        // Normalize roughly -250 to 250 range to height
+        const y = h/2 + (scopeData[i] / 500) * h;
+        if(i===0) ctx.moveTo(x,y);
+        else ctx.lineTo(x,y);
     }
     ctx.stroke();
-    
-    if (stringVibration[i] > 0) {
-      stringVibration[i] *= 0.96;
-      if (stringVibration[i] < 0.01) stringVibration[i] = 0;
-    }
-  }
 }
 
-function updateFps() {
-  const now = Date.now();
-  if (now - lastFpsTime >= 1000) {
-    document.getElementById('fps').textContent = frameCount;
+function updateStats() {
+    document.getElementById('fps-counter').innerText = frameCount;
     frameCount = 0;
-    lastFpsTime = now;
-  }
-  setTimeout(updateFps, 100);
 }
 
-function resizeGraphs() {
-  const graphs = ['accelXGraph', 'accelYGraph', 'accelZGraph', 'gyroXGraph', 'gyroYGraph', 'gyroZGraph'];
-  graphs.forEach(id => {
-    const canvas = document.getElementById(id);
-    if (canvas) {
-      canvas.width = canvas.offsetWidth;
-      canvas.height = canvas.offsetHeight;
-    }
-  });
-}
-
-connectWS();
-drawGuitar();
-updateFps();
-resizeGraphs();
-updateAllGraphs();
-window.addEventListener('resize', () => {
-  resize();
-  resizeGraphs();
-});
+window.onload = init;
 </script>
 </body>
 </html>
 )rawliteral";
 
+// ==========================================
+// 📡 ESP32 BACKEND LOGIC
+// ==========================================
+
 void webSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length) {
   if (type == WStype_TEXT) {
     String msg = String((char*)payload);
-    if (msg.indexOf("guitarType") > 0) {
-      int idx = msg.indexOf(":");
-      if (idx > 0) {
-        int type = msg.substring(idx + 1).toInt();
-        currentGuitarType = constrain(type, 0, 4);
-        stringCount = (currentGuitarType == 3 || currentGuitarType == 4) ? 4 : 6;
-        Serial.printf("🎸 Guitar changed to type %d (%d strings)\n", currentGuitarType, stringCount);
-      }
-    }
     if (msg.indexOf("sensitivity") > 0) {
       int idx = msg.indexOf(":");
       if (idx > 0) {
         sensitivity = msg.substring(idx + 1).toFloat();
-        Serial.printf("🎚️ Sensitivity: %.2f\n", sensitivity);
+        Serial.printf("🎚️ Sensitivity set to: %.2f\n", sensitivity);
       }
     }
   }
@@ -1443,49 +667,44 @@ void setup() {
   Serial.begin(115200);
   delay(500);
   
-  Serial.println("\n╔═══════════════════════════════════════════╗");
-  Serial.println("║   Electric Brain - ESP32 Guitar v5.0      ║");
-  Serial.println("║   Acoustic | Electric | Classical        ║");
-  Serial.println("║   Bass | Ukulele                         ║");
-  Serial.println("╚═══════════════════════════════════════════╝\n");
-  
-  // FIX: Updated for ESP32 Core 3.0+
-  // ledcSetup and ledcAttachPin are REMOVED in version 3.0
-  // Replaced with single ledcAttach(pin, freq, res)
+  // Audio Setup (Core 3.0 Compatible)
   ledcAttach(BUZZER_PIN, 1000, 8);
   
+  // IMU Setup
   Wire.begin(I2C_SDA, I2C_SCL);
   Wire.setClock(400000);
-  
   int err = mpu.init(calib, IMU_ADDRESS);
   if (err != 0) {
-    Serial.printf("✗ MPU6500 failed: %d\n", err);
-    while (1) delay(1000);
+    Serial.printf("Error MPU6500: %d\n", err);
+    while (1) delay(100);
   }
-  Serial.println("✓ MPU6500 OK");
   mpu.setAccelRange(4);
   mpu.setGyroRange(500);
   
+  // WiFi Setup
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
-  Serial.print("⏳ WiFi");
+  Serial.print("Connecting to WiFi");
   while (WiFi.status() != WL_CONNECTED) {
-    delay(300);
+    delay(500);
     Serial.print(".");
   }
-  Serial.printf("\n✓ Connected! Open: http://%s\n", WiFi.localIP().toString().c_str());
   
+  // ⚠️ IMPORTANT: PRINT IP FOR USER ⚠️
+  Serial.println("\n=============================================");
+  Serial.print("✅ CONNECTED! IP ADDRESS: ");
+  Serial.println(WiFi.localIP());
+  Serial.println("=============================================");
+
+  // Start Services
   webSocket.begin();
   webSocket.onEvent(webSocketEvent);
   
   server.on("/", []() {
-    String fullPage = String(webpage) + String(webpage_part2) + String(webpage_part3) + String(webpage_part4);
+    String fullPage = String(webpage_part1) + String(webpage_part2) + String(webpage_part3);
     server.send(200, "text/html", fullPage);
   });
   server.begin();
-  
-  Serial.println("\n🎸 Ready! Select guitar type in browser");
-  Serial.println("   Tilt to select strings, shake to strum!\n");
 }
 
 void loop() {
@@ -1494,11 +713,13 @@ void loop() {
   
   unsigned long now = millis();
   
+  // Sensor Loop (approx 125Hz)
   if (now - lastSensorUpdate >= 8) {
     lastSensorUpdate = now;
     updateSensor();
   }
   
+  // Broadcast Loop (approx 40Hz)
   if (now - lastBroadcast >= 25) {
     lastBroadcast = now;
     broadcastData();
@@ -1517,6 +738,7 @@ void updateSensor() {
   gyroY = gyroData.gyroY;
   gyroZ = gyroData.gyroZ;
   
+  // Calculate Orientation
   roll = atan2(accelX, accelZ) * 180.0 / PI;
   pitch = atan2(accelY, sqrt(accelX * accelX + accelZ * accelZ)) * 180.0 / PI;
   
@@ -1528,57 +750,24 @@ void updateSensor() {
 }
 
 void updateStringSelection() {
+  // Reset states
   for (int i = 0; i < 6; i++) {
     stringActive[i] = false;
-    stringVelocity[i] = 0;
   }
   
-  activeStringCount = 0;
+  // Map Roll angle to strings (Simple linear mapping for stability)
+  float rollLimit = 45.0; 
+  float val = constrain(roll, -rollLimit, rollLimit);
+  // Map -45 to 45 -> 0 to 5
+  int targetStr = map((long)val, -rollLimit, rollLimit, 0, 5);
   
-  float rollRange = (stringCount == 4) ? 30.0 : 45.0;
-  float normalizedRoll = constrain(roll, -rollRange, rollRange);
+  // Logic: Highlight the target string and maybe neighbors if roll is fast
+  stringActive[targetStr] = true;
   
-  float stringFloat = ((normalizedRoll + rollRange) / (2 * rollRange)) * (stringCount - 1);
-  int centerString = constrain((int)round(stringFloat), 0, stringCount - 1);
-  
-  stringActive[centerString] = true;
-  stringVelocity[centerString] = 1.0;
-  activeStringCount = 1;
-  
-  float rollMag = abs(roll);
-  
-  if (rollMag > 15) {
-    if (roll < 0 && centerString > 0) {
-      stringActive[centerString - 1] = true;
-      stringVelocity[centerString - 1] = 0.8;
-      activeStringCount++;
-    }
-    if (roll > 0 && centerString < stringCount - 1) {
-      stringActive[centerString + 1] = true;
-      stringVelocity[centerString + 1] = 0.8;
-      activeStringCount++;
-    }
-  }
-  
-  if (rollMag > 30) {
-    for (int i = 0; i < stringCount; i++) {
-      if (!stringActive[i]) {
-        int dist = abs(i - centerString);
-        if (dist <= 2) {
-          stringActive[i] = true;
-          stringVelocity[i] = 1.0 - (dist * 0.2);
-          activeStringCount++;
-        }
-      }
-    }
-  }
-  
-  if (rollMag > 40) {
-    for (int i = 0; i < stringCount; i++) {
-      stringActive[i] = true;
-      stringVelocity[i] = 1.0 - (abs(i - centerString) * 0.1);
-    }
-    activeStringCount = stringCount;
+  // If moving fast (roll shake), activate neighbors
+  if (abs(roll) > 10) {
+      if(targetStr > 0) stringActive[targetStr-1] = true;
+      if(targetStr < 5) stringActive[targetStr+1] = true;
   }
 }
 
@@ -1587,111 +776,75 @@ void detectChord() {
   if (now - lastChordChange < 150) return;
   
   String newChord = currentChord;
-  int newIdx = currentChordIndex;
   
-  if (pitch > 35) {
-    newChord = "G"; newIdx = 2;
-  } else if (pitch < -35) {
-    newChord = "D"; newIdx = 3;
-  } else if (pitch > 20) {
-    newChord = "C"; newIdx = 1;
-  } else if (pitch < -20) {
-    newChord = "Am"; newIdx = 5;
-  } else if (abs(roll) > 35) {
-    newChord = "Em"; newIdx = 4;
-  } else if (abs(pitch) < 10 && abs(roll) < 10) {
-    newChord = "Open"; newIdx = 0;
-  } else {
-    newChord = "Dm"; newIdx = 6;
-  }
+  // Simple Chord Logic based on Pitch (Tilting neck up/down)
+  if (pitch > 35) newChord = "G Major";
+  else if (pitch < -35) newChord = "D Major";
+  else if (pitch > 15) newChord = "C Major";
+  else if (pitch < -15) newChord = "A Minor";
+  else newChord = "Open E";
   
   if (newChord != currentChord) {
     currentChord = newChord;
-    currentChordIndex = newIdx;
     lastChordChange = now;
+    // Map chord string logic here if needed
   }
 }
 
 void broadcastData() {
   unsigned long now = millis();
   
+  // Strum Detection
   float accelChange = abs(accelMag - lastAccelMag);
   lastAccelMag = accelMag;
   
   bool strum = false;
-  
-  if (accelMag > 1.0 + STRUM_THRESHOLD * sensitivity) strum = true;
-  if (accelChange > STRUM_THRESHOLD * 0.4 * sensitivity) strum = true;
-  if (gyroMag > GYRO_THRESHOLD * sensitivity) strum = true;
-  
-  if (strum && (now - lastStrumTime < STRUM_COOLDOWN)) {
-    strum = false;
+  // Threshold-based strumming
+  if ((accelChange > STRUM_THRESHOLD * sensitivity) || (gyroMag > GYRO_THRESHOLD * sensitivity)) {
+      if (now - lastStrumTime > STRUM_COOLDOWN) {
+          strum = true;
+          lastStrumTime = now;
+      }
   }
   
-  if (strum) {
-    lastStrumTime = now;
-    wasStrumming = true;
-  } else if (accelMag < 1.0 + STRUM_THRESHOLD * 0.3) {
-    wasStrumming = false;
-  }
-  
+  // Build JSON
   String json = "{";
-  json += "\"roll\":" + String(roll, 1) + ",";
-  json += "\"pitch\":" + String(pitch, 1) + ",";
+  json += "\"roll\":" + String(roll, 2) + ",";
+  json += "\"pitch\":" + String(pitch, 2) + ",";
   json += "\"accelMag\":" + String(accelMag, 2) + ",";
-  json += "\"gyroMag\":" + String(gyroMag, 1) + ",";
-  json += "\"accelX\":" + String(accelX, 3) + ",";
-  json += "\"accelY\":" + String(accelY, 3) + ",";
-  json += "\"accelZ\":" + String(accelZ, 3) + ",";
-  json += "\"gyroX\":" + String(gyroX, 2) + ",";
-  json += "\"gyroY\":" + String(gyroY, 2) + ",";
-  json += "\"gyroZ\":" + String(gyroZ, 2) + ",";
+  json += "\"gyroZ\":" + String(gyroZ, 2) + ","; // For scope
   json += "\"chord\":\"" + currentChord + "\",";
   
+  // Strings Array
   json += "\"strings\":[";
   for (int i = 0; i < 6; i++) {
-    json += (i < stringCount && stringActive[i]) ? "true" : "false";
+    json += stringActive[i] ? "true" : "false";
     if (i < 5) json += ",";
   }
   json += "],";
   
   json += "\"strum\":" + String(strum ? "true" : "false");
   
+  // Audio Frequencies (If strummed)
   if (strum) {
     json += ",\"playFreqs\":[";
-    
-    for (int i = 0; i < stringCount; i++) {
-      if (stringActive[i]) {
-        float baseFreq = tunings[currentGuitarType][i];
-        int fret = chordFrets[currentChordIndex][i];
-        
-        if (fret >= 0) {
-          float freq = baseFreq * pow(1.059463, fret);
-          json += String(freq, 2);
-        } else {
-          json += "0";
+    bool first = true;
+    for(int i=0; i<6; i++) {
+        if(stringActive[i]) {
+            if(!first) json += ",";
+            // Just sending base frequencies for now to keep logic simple
+            json += String(tunings[0][i]); 
+            first = false;
         }
-      } else {
-        json += "0";
-      }
-      if (i < stringCount - 1) json += ",";
     }
     json += "]";
     
-    for (int i = stringCount - 1; i >= 0; i--) {
-      if (stringActive[i]) {
-        float freq = tunings[currentGuitarType][i] * pow(1.059463, chordFrets[currentChordIndex][i]);
-        // FIX: Updated for ESP32 Core 3.0+
-        // Uses ledcWriteTone(pin, freq) instead of channel
-        ledcWriteTone(BUZZER_PIN, (int)freq);
-        delay(30);
-        ledcWriteTone(BUZZER_PIN, 0);
-        break;
-      }
-    }
+    // Physical Feedback (Buzzer)
+    ledcWriteTone(BUZZER_PIN, 200); // Click sound
+    delay(10);
+    ledcWriteTone(BUZZER_PIN, 0);
   }
   
   json += "}";
-  
   webSocket.broadcastTXT(json);
 }
